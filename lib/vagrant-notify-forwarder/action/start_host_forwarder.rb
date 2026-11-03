@@ -46,12 +46,7 @@ module VagrantPlugins
             return false
           end
 
-          pidfile = Utils.host_pidfile env
-          pidfile.open('a+') do |f|
-            f.write("#{pid}\n")
-          end
-
-          true
+          Utils.record_host_watcher(env, pid, reaper)
         end
 
         def call(env)
