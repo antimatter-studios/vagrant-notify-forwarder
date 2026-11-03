@@ -159,10 +159,9 @@ module VagrantPlugins
         value.to_i if value.match?(/\A[1-9][0-9]*\z/)
       end
 
-      # Config picks a free port on every command, and a running machine's own port
-      # is not free, so a machine that kept its forward keeps the port it recorded.
-      # Any other start looks again, because every machine in a Vagrantfile reads its
-      # configuration before the first one boots.
+      # A machine that kept its forward keeps the port it recorded: its own forward
+      # holds that port, so a probe would find it taken and move away from it. Any
+      # other start chooses here, once, and the forward and the watcher both use it.
       def self.choose_port(env)
         machine = env[:machine]
         retained = RETAINED_STATES.include?(machine.state.id) ? recorded_port(env) : nil
@@ -182,27 +181,42 @@ module VagrantPlugins
       end
 
       # A claim covers the time between choosing a port and the provider binding it,
-      # when a machine starting beside this one would find the port still free.
+      # when a machine starting beside this one would find the port still free. It is
+      # a lock on a file, so it holds between `vagrant` processes sharing a
+      # VAGRANT_HOME as well as within one, and it ends when the process does.
       def self.claim_free_port(env, first)
-        owner = env[:machine].data_dir.to_s
-        @port_claims_lock.synchronize do
-          PORT_ATTEMPTS.times do |offset|
-            port = first + offset
-            next if @port_claims.fetch(port, owner) != owner || !udp_port_free?(port)
+        release_port_claim(env)
 
-            @port_claims.delete_if { |_port, holder| holder == owner }
-            @port_claims[port] = owner
+        PORT_ATTEMPTS.times do |offset|
+          port = first + offset
+          claim = lock_port(env, port)
+          next unless claim
+
+          if udp_port_free?(port)
+            @port_claims_lock.synchronize { @port_claims[env[:machine].data_dir.to_s] = claim }
             return port
           end
+          claim.close
         end
         raise PortUnavailable.new(first, first + PORT_ATTEMPTS - 1)
       end
 
+      # The files stay: removing one could separate two holders of the same port.
+      # File.open marks the descriptor close-on-exec, so a provider's process does not
+      # inherit the lock and keep it after this `vagrant` has gone.
+      def self.lock_port(env, port)
+        directory = env[:tmp_path].join('notify-forwarder-ports')
+        directory.mkpath
+        file = File.open(directory.join("#{port}.lock"), File::RDWR | File::CREAT, 0o600)
+        return file if file.flock(File::LOCK_EX | File::LOCK_NB)
+
+        file.close
+        nil
+      end
+
       def self.release_port_claim(env)
-        owner = env[:machine].data_dir.to_s
-        @port_claims_lock.synchronize do
-          @port_claims.delete_if { |_port, holder| holder == owner }
-        end
+        claim = @port_claims_lock.synchronize { @port_claims.delete(env[:machine].data_dir.to_s) }
+        claim.close if claim
       end
 
       def self.current_port(env)
