@@ -126,4 +126,10 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Utils do
 
     expect(described_class.ensure_binary_downloaded(env, :linux, :riscv64)).to be_nil
   end
+
+  it 'names the setting that supplies a binary for a platform with no default' do
+    expect(ui).to receive(:error).with(/'freebsd' 'x86_64'.*config\.notify_forwarder\.binaries/)
+
+    described_class.ensure_binary_downloaded(env, :freebsd, :x86_64)
+  end
 end

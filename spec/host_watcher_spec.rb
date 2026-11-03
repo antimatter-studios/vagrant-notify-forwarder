@@ -28,6 +28,7 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartHostForwarde
 
   before do
     directory.join('id').write('test-machine')
+    FileUtils.mkpath(hostpath)
     grace(0.05)
     allow(vm).to receive(:network)
     allow(vm).to receive(:synced_folders).and_return(
@@ -121,28 +122,64 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartHostForwarde
     expect(pidfile).not_to exist
   end
 
-  it 'reports only the failed folder when one of two watchers exits at once' do
-    grace(3)
-    missing = directory.join('missing').to_s
-    allow(vm).to receive(:synced_folders).and_return(
-      'project' => { hostpath: hostpath, guestpath: guestpath },
-      'missing' => { hostpath: missing, guestpath: '/missing' }
-    )
-    install_watcher(<<~SH)
-      [ "$4" = '#{missing}' ] && exit 3
-      #{recording_watcher}
-    SH
-    # macOS can take seconds over the first run of a new executable, so that run
-    # happens here and the grace only has to cover the exit itself.
-    system(binary.to_s, 'watch', '-c', '127.0.0.1:29324', missing, '/missing')
+  context 'with several folders' do
+    let(:other) { directory.join('other dir').to_s }
+    let(:missing) { directory.join('missing').to_s }
 
-    middleware.call(env)
+    def folders(*extra)
+      allow(vm).to receive(:synced_folders).and_return(
+        { 'project' => { hostpath: hostpath, guestpath: guestpath } }.merge(*extra)
+      )
+    end
 
-    expect_arguments_kept_whole
-    expect(ui).to have_received(:error).once.with(/#{Regexp.escape(missing)}.*exited at once.*exit 3/)
-    expect(ui).to have_received(:detail).with(/forwarding notifications on #{Regexp.escape(hostpath)} to/)
-    expect(ui).not_to have_received(:detail).with(/forwarding notifications on #{Regexp.escape(missing)} to/)
-    expect(pidfile.readlines.length).to eq(1)
+    before { FileUtils.mkpath(other) }
+
+    it 'starts one watcher carrying every enabled folder' do
+      folders('other' => { hostpath: other, guestpath: '/other dir' },
+              'off' => { hostpath: other, guestpath: '/off', disabled: true })
+      install_watcher(recording_watcher)
+
+      middleware.call(env)
+
+      expect(recorded_arguments).to eq(['watch', '-c', '127.0.0.1:29324', hostpath, guestpath, other, '/other dir'])
+      expect(pidfile.readlines.length).to eq(1)
+      expect(ui).to have_received(:detail).with(/forwarding notifications on #{Regexp.escape(hostpath)} to/)
+      expect(ui).to have_received(:detail).with(/forwarding notifications on #{Regexp.escape(other)} to/)
+      expect(ui).not_to have_received(:detail).with(%r{to /off})
+    end
+
+    # The binary aborts on a path it cannot resolve, which would end every folder.
+    it 'leaves out a host path that does not exist, names it, and watches the rest' do
+      folders('missing' => { hostpath: missing, guestpath: '/missing' })
+      install_watcher(recording_watcher)
+
+      middleware.call(env)
+
+      expect_arguments_kept_whole
+      expect(ui).to have_received(:error).once.with(/#{Regexp.escape(missing)}/)
+      expect(ui).not_to have_received(:detail).with(/forwarding notifications on #{Regexp.escape(missing)} to/)
+    end
+
+    it 'claims no folder when the watcher exits at once' do
+      folders('other' => { hostpath: other, guestpath: '/other dir' })
+      grace(60)
+      install_watcher('exit 3')
+
+      middleware.call(env)
+
+      expect(ui).to have_received(:error).once.with(/exited at once.*exit 3/)
+      expect(ui).not_to have_received(:detail).with(/forwarding notifications/)
+    end
+
+    it 'starts no watcher when no folder is left to watch' do
+      allow(vm).to receive(:synced_folders).and_return('missing' => { hostpath: missing, guestpath: '/missing' })
+      install_watcher(recording_watcher)
+
+      middleware.call(env)
+
+      expect(pidfile).not_to exist
+      expect(recorded).not_to exist
+    end
   end
 
   it 'reports a watcher that cannot be started and still finishes the action' do
