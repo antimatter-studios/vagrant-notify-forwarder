@@ -41,8 +41,10 @@ vagrant reload
 
 ### Port
 
-By default, the plugin uses UDP port 29324. If multiple VMs are running, the
-port is automatically corrected to the next available port (tries up to 10 ports).
+By default, the plugin uses UDP port 29324. A machine that is starting takes the
+first free port of the 10 from there, and `up` fails, naming the range, if none is
+free. Machines started together by one `vagrant up` get different ports. A running,
+saved or paused machine keeps the port it has, recorded in its data directory.
 
 To set a specific port:
 
@@ -60,12 +62,32 @@ config.notify_forwarder.enable = false
 
 ### Permissions
 
-The client in the guest OS runs as root by default, assuming passwordless `sudo` works. To disable
-privilege escalation:
+The receiver in the guest runs as the SSH user, by default `vagrant`. It needs to be able
+to write to the files in your shared folders, because that is how it raises an event. If the
+SSH user cannot write to them, run it as root:
 
 ```ruby
-config.notify_forwarder.run_as_root = false
+config.notify_forwarder.run_as_root = true
 ```
+
+## The receiver in the guest
+
+With passwordless `sudo`, the binary is installed at
+`/usr/local/libexec/notify-forwarder/notify-forwarder`, owned by root. On a guest with systemd it
+runs as `notify-forwarder.service`, which restarts on failure and comes back after a reboot inside
+the guest. To stop it after disabling the plugin, run
+`sudo systemctl disable --now notify-forwarder` in the guest.
+
+| Guest | Binary | How it runs |
+|-------|--------|-------------|
+| `sudo` and systemd | `/usr/local/libexec/notify-forwarder`, owned by root | a service |
+| `sudo`, no systemd | `/usr/local/libexec/notify-forwarder`, owned by root | a background process, started again at the next `up` |
+| no `sudo` | `~/.local/libexec/notify-forwarder`, mode 0700 | a background process as the SSH user, started again at the next `up` |
+
+Each start compares the binary's SHA-256 and the service definition with what the guest has, and
+changes only what differs. A `resume`, or an `up` on a running machine, uploads nothing and leaves a
+matching receiver running. A receiver an earlier version started from `/tmp/notify-forwarder` is
+stopped, and that file is removed.
 
 ### Overriding binary sources
 
