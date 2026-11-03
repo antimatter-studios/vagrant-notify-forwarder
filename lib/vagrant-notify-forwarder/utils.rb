@@ -1,6 +1,8 @@
 require 'digest'
 require 'securerandom'
 require 'uri'
+require 'json'
+require 'open3'
 require 'vagrant'
 require 'vagrant/util/downloader'
 
@@ -127,6 +129,54 @@ module VagrantPlugins
 
       def self.host_pidfile(env)
         env[:machine].data_dir.join('notify_watcher_host_pid')
+      end
+
+      def self.watcher_identity(pid)
+        return unless pid.to_s.match?(/\A[1-9][0-9]*\z/) && pid.to_i > 1
+
+        output, _error, status = Open3.capture3(
+          { 'LC_ALL' => 'C' }, 'ps', '-ww', '-p', pid.to_s, '-o', 'lstart=', '-o', 'args='
+        )
+        output.strip if status.success? && !output.strip.empty?
+      rescue SystemCallError, IOError
+        nil
+      end
+
+      def self.record_host_watcher(env, pid, reaper = nil)
+        identity = watcher_identity(pid)
+        return false if reaper && reaper.join(0)
+        unless identity
+          env[:ui].error "Notify-forwarder: Could not verify watcher #{pid}; its PID was not recorded"
+          return false
+        end
+
+        host_pidfile(env).open('a') do |file|
+          file.puts("#{pid} #{JSON.generate(identity: identity)}")
+        end
+        true
+      end
+
+      def self.stop_host_watchers(env)
+        pidfile = host_pidfile(env)
+        return unless pidfile.file?
+
+        pidfile.each_line do |line|
+          pid, metadata = line.split(' ', 2)
+          next unless pid && metadata && pid.match?(/\A[1-9][0-9]*\z/) && pid.to_i > 1
+
+          begin
+            record = JSON.parse(metadata)
+            next unless record.is_a?(Hash) && record['identity'].is_a?(String)
+            next unless watcher_identity(pid.to_i) == record['identity']
+
+            Process.kill('TERM', pid.to_i)
+          rescue JSON::ParserError, Errno::ESRCH
+            next
+          end
+        end
+        pidfile.delete
+      rescue Errno::ENOENT
+        nil
       end
     end
   end
