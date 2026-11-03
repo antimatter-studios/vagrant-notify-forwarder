@@ -33,7 +33,7 @@ module VagrantPlugins
         def call(env)
           if env[:machine].config.notify_forwarder.enable
             port = env[:machine].config.notify_forwarder.port
-            env[:machine].config.vm.network :forwarded_port, host: port, guest: port, protocol: 'udp', auto_correct: true
+            env[:machine].config.vm.network :forwarded_port, host: port, guest: port, host_ip: '127.0.0.1', protocol: 'udp', auto_correct: true
           end
 
           @app.call env
