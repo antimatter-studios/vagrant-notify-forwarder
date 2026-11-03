@@ -27,8 +27,7 @@ module VagrantPlugins
       register_stop_hooks = lambda do |hook|
         require_relative 'action/stop_host_forwarder'
 
-        hook.before Vagrant::Action::Builtin::GracefulHalt,
-                    VagrantPlugins::VagrantNotifyForwarder::Action::StopHostForwarder
+        hook.prepend VagrantPlugins::VagrantNotifyForwarder::Action::StopHostForwarder
       end
 
       register_resume_hooks = lambda do |hook|

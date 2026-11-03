@@ -15,7 +15,7 @@ module Vagrant
     end
   end
 
-  def self.plugin(version, component)
+  def self.plugin(version, component = nil)
     raise ArgumentError, 'Only the config API is stubbed' unless version == 2 && component == :config
 
     Config
