@@ -103,6 +103,17 @@ The plugin downloads binaries for supported platforms:
 
 ## Development
 
+Run the specs without installing Vagrant or changing any installed plugins:
+
+```bash
+BUNDLE_GEMFILE=spec/Gemfile bundle install
+BUNDLE_GEMFILE=spec/Gemfile bundle exec rspec --require ./spec/spec_helper.rb
+```
+
+The suite stubs `Vagrant.plugin(2, :config)`, the downloader and the middleware
+environment. It does not boot a VM or download forwarder binaries. Pull requests
+run the same specs on Ruby 3.1 and 3.3; release publishing is separate.
+
 Use Bundler and the project `Rakefile` to keep all tooling local to the repository.
 
 1. Install dependencies:
