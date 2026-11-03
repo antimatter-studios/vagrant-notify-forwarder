@@ -43,8 +43,11 @@ vagrant reload
 
 By default, the plugin uses UDP port 29324. A machine that is starting takes the
 first free port of the 10 from there, and `up` fails, naming the range, if none is
-free. Machines started together by one `vagrant up` get different ports. A running,
-saved or paused machine keeps the port it has, recorded in its data directory.
+free. The port is chosen only then: other commands do not probe, and nothing moves
+the forward afterwards. Machines starting at the same time get different ports,
+whether one `vagrant` starts them or several do, as long as they share a
+`VAGRANT_HOME`. A running, saved or paused machine keeps the port it has, recorded
+in its data directory.
 
 To set a specific port:
 

@@ -73,12 +73,13 @@ module VagrantPlugins
         def call(env)
           Utils.stop_host_watchers(env)
 
-          if env[:machine].config.notify_forwarder.enable
-            port = Utils.choose_port(env)
-            env[:machine].config.vm.network :forwarded_port, host: port, guest: port, host_ip: '127.0.0.1', protocol: 'udp', auto_correct: true
-          end
-
           begin
+            if env[:machine].config.notify_forwarder.enable
+              port = Utils.choose_port(env)
+              # The watcher sends to this port, so nothing may move the host side of it.
+              env[:machine].config.vm.network :forwarded_port, host: port, guest: port, host_ip: '127.0.0.1', protocol: 'udp', auto_correct: false
+            end
+
             @app.call env
           ensure
             Utils.release_port_claim(env)

@@ -1,4 +1,5 @@
 require_relative 'spec_helper'
+require 'rbconfig'
 require 'socket'
 
 RSpec.describe 'the port a start takes', :real_ports do
@@ -8,6 +9,7 @@ RSpec.describe 'the port a start takes', :real_ports do
   let(:range) { 10 }
   let(:first) { free_range }
   let(:held) { [] }
+  let(:claimants) { [] }
   let(:other_directory) { directory.join('other machine').tap(&:mkpath) }
   let(:other_machine) { double('other machine', config: config, state: state, data_dir: other_directory) }
   let(:other_env) { { machine: other_machine, ui: ui, tmp_path: directory, root_path: directory } }
@@ -19,6 +21,7 @@ RSpec.describe 'the port a start takes', :real_ports do
 
   after do
     held.each(&:close)
+    claimants.each { |claimant| claimant.close unless claimant.closed? }
     [env, other_env].each { |each_env| utils.release_port_claim(each_env) if utils.respond_to?(:release_port_claim) }
   end
 
@@ -38,6 +41,43 @@ RSpec.describe 'the port a start takes', :real_ports do
       return base if (base...(base + range)).all? { |port| bindable?(port) }
     end
     raise 'No free run of UDP ports on this host'
+  end
+
+  # A second `vagrant`: a process of its own that chooses a port on a line from
+  # the parent, prints it, and holds it until its stdin closes.
+  CLAIMANT = <<~'RUBY'.freeze
+    support, lib, first, tmp_path, data_dir = ARGV
+    $LOAD_PATH.unshift(support, lib)
+    require 'pathname'
+    require 'vagrant'
+    require 'vagrant-notify-forwarder/utils'
+
+    settings = Struct.new(:port).new(first.to_i)
+    config = Struct.new(:notify_forwarder).new(settings)
+    state = Struct.new(:id).new(:not_created)
+    machine = Struct.new(:config, :state, :data_dir).new(config, state, Pathname.new(data_dir))
+    env = { machine: machine, tmp_path: Pathname.new(tmp_path) }
+
+    $stdout.sync = true
+    puts 'ready'
+    $stdin.gets
+    puts VagrantPlugins::VagrantNotifyForwarder::Utils.choose_port(env)
+    $stdin.read
+  RUBY
+
+  def start_claimant(name)
+    data_dir = directory.join(name).tap(&:mkpath).to_s
+    arguments = [File.expand_path('support', __dir__), File.expand_path('../lib', __dir__),
+                 first.to_s, directory.to_s, data_dir]
+    claimant = IO.popen([RbConfig.ruby, '-e', CLAIMANT, *arguments], 'r+')
+    claimants << claimant
+    expect(claimant.gets).to eq("ready\n")
+    claimant
+  end
+
+  def claimed_port(claimant)
+    claimant.puts
+    claimant.gets.to_i
   end
 
   def hold(port)
@@ -65,6 +105,40 @@ RSpec.describe 'the port a start takes', :real_ports do
     ports = machines.map { |each_env| Thread.new { utils.choose_port(each_env) } }.map(&:value)
 
     expect(ports.uniq.size).to eq(2)
+  end
+
+  it 'moves past a port another vagrant process has claimed and not yet bound' do
+    claimant = start_claimant('claimant')
+    expect(claimed_port(claimant)).to eq(first)
+
+    expect(utils.choose_port(env)).to eq(first + 1)
+  end
+
+  it 'gives vagrant processes starting at the same moment different ports' do
+    racing = Array.new(6) { |index| start_claimant("racer #{index}") }
+
+    racing.each(&:puts)
+    ports = racing.map { |claimant| claimant.gets.to_i }
+
+    expect(ports.uniq.size).to eq(6)
+    expect(ports).to all(be_between(first, first + range - 1))
+  end
+
+  it 'takes back a port from a vagrant process that has finished' do
+    claimant = start_claimant('claimant')
+    claimed_port(claimant)
+    claimant.close
+
+    expect(utils.choose_port(env)).to eq(first)
+  end
+
+  it 'takes back a port from a vagrant process that was killed' do
+    claimant = start_claimant('claimant')
+    claimed_port(claimant)
+    Process.kill('KILL', claimant.pid)
+    claimant.close
+
+    expect(utils.choose_port(env)).to eq(first)
   end
 
   it 'lets a machine take the port it already claimed' do

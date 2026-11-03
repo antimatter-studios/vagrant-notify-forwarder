@@ -42,28 +42,12 @@ module VagrantPlugins
 
       def finalize!
         @port = 29324 if @port == UNSET_VALUE
-        @port = auto_correct_port(@port)
         @enable = true if @enable == UNSET_VALUE
         @run_as_root = false if @run_as_root == UNSET_VALUE
         @binaries = prepare_binaries(@binaries)
       end
 
       private
-
-      def auto_correct_port(port)
-        require 'socket'
-        10.times do
-          begin
-            socket = UDPSocket.new
-            socket.bind('127.0.0.1', port)
-            socket.close
-            return port
-          rescue Errno::EADDRINUSE
-            port += 1
-          end
-        end
-        port
-      end
 
       def prepare_binaries(value)
         defaults = DEFAULT_BINARIES.transform_values(&:dup)

@@ -236,8 +236,6 @@ end
 RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Config do
   it 'runs the guest receiver unprivileged by default' do
     config = described_class.new
-    allow(config).to receive(:auto_correct_port) { |port| port }
-
     config.finalize!
 
     expect(config.run_as_root).to eq(false)
