@@ -20,32 +20,22 @@ jobs:
         with:
           ruby-version: '3.3'
 
-      - name: Inject binary checksums
+      - name: Verify default binaries against their checksums
         run: |
-          CONFIG=lib/vagrant-notify-forwarder/config.rb
-          for pair in \
-            "linux_x86_64:SHA256_LINUX_X86_64" \
-            "linux_arm64:SHA256_LINUX_ARM64" \
-            "linux_armv7l:SHA256_LINUX_ARMV7L" \
-            "darwin_x86_64:SHA256_DARWIN_X86_64" \
-            "darwin_arm64:SHA256_DARWIN_ARM64"; do
-            binary="${pair%%:*}"
-            placeholder="${pair##*:}"
-            url="https://github.com/christhomas/notify-forwarder/releases/download/v1.1.0/notify-forwarder-${binary}"
-            sha256=$(curl -fsSL "$url" | sha256sum | awk '{print $1}')
-            echo "  ${binary}: ${sha256}"
-            sed -i "s/${placeholder}/${sha256}/" "$CONFIG"
-          done
-          echo "--- config.rb after injection ---"
-          grep -A1 'NOTIFY_FORWARDER_BASE_URL.*notify-forwarder-' "$CONFIG"
+          ruby -Ispec/support -Ilib -e '
+            require "digest"
+            require "open-uri"
+            require "vagrant"
+            require "vagrant-notify-forwarder/config"
 
-      - name: Verify no placeholders remain
-        run: |
-          if grep -q 'SHA256_' lib/vagrant-notify-forwarder/config.rb; then
-            echo "ERROR: unreplaced SHA256 placeholders found"
-            grep 'SHA256_' lib/vagrant-notify-forwarder/config.rb
-            exit 1
-          fi
+            binaries = VagrantPlugins::VagrantNotifyForwarder::Config::DEFAULT_BINARIES
+            mismatched = binaries.values.reject do |url, expected|
+              actual = Digest::SHA256.hexdigest(URI.parse(url).open(&:read))
+              puts "#{url}: #{actual}"
+              actual == expected
+            end
+            abort "Checksum mismatch: #{mismatched.map(&:first).join(", ")}" unless mismatched.empty?
+          '
 
       - name: Build gem
         run: gem build vagrant-notify-forwarder.gemspec

@@ -9,27 +9,28 @@ module VagrantPlugins
       NOTIFY_FORWARDER_VERSION = 'v1.1.0'.freeze
       NOTIFY_FORWARDER_BASE_URL = "https://github.com/christhomas/notify-forwarder/releases/download/#{NOTIFY_FORWARDER_VERSION}".freeze
 
-      # sha256 placeholders are replaced at gem-build time by the release workflow
+      # The checksums belong to NOTIFY_FORWARDER_VERSION and move with it. The release
+      # workflow stops if a release binary does not match.
       DEFAULT_BINARIES = {
         [:linux, :x86_64] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-linux_x86_64",
-          'SHA256_LINUX_X86_64'
+          '8fe1b79e2673187319044595b485fded2fc79a8dc886e9d3616b6bbe15e398dc'
         ],
         [:linux, :arm64] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-linux_arm64",
-          'SHA256_LINUX_ARM64'
+          '5ee81f9bc7ed888351e78c6015a49e42847b5d29b87ed828721cbf2ce452f876'
         ],
         [:linux, :armv7l] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-linux_armv7l",
-          'SHA256_LINUX_ARMV7L'
+          '9ef5130e050cd47af29c7358e7bd63cffee185185ca32ec77597c0bfeb3d38a6'
         ],
         [:darwin, :x86_64] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-darwin_x86_64",
-          'SHA256_DARWIN_X86_64'
+          '0160e13cad8b3b91c0d5dbfe7b2f013a1c0362538056aa69dcfd26596b96bddb'
         ],
         [:darwin, :arm64] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-darwin_arm64",
-          'SHA256_DARWIN_ARM64'
+          '33dd00bf392c71e94238b2cfbf793f9ff2e987c37837634fabc1e04f242ef9a8'
         ],
       }.freeze
 
