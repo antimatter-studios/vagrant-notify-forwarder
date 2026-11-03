@@ -7,8 +7,9 @@ module VagrantPlugins
         end
 
         def call(env)
-          return unless env[:machine].config.notify_forwarder.enable
-          $BOOT_SAVED = env[:machine].state.id == :saved
+          if env[:machine].config.notify_forwarder.enable
+            $BOOT_SAVED = env[:machine].state.id == :saved
+          end
 
           @app.call env
         end
