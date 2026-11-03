@@ -47,7 +47,10 @@ module VagrantPlugins
             machine_id_path: machine.data_dir.join('id').to_s, machine_id: machine.id
           }
           supervisor = File.expand_path('../host_watcher.rb', __dir__)
-          pid = Process.spawn(RbConfig.ruby, supervisor, JSON.generate(options))
+          # A watcher outlives this process, so it takes none of its descriptors:
+          # whoever reads the output of `vagrant up` must be able to reach its end.
+          log = Utils.host_watcher_log(env).to_s
+          pid = Process.spawn(RbConfig.ruby, supervisor, JSON.generate(options), in: File::NULL, out: [log, 'a'], err: [:child, :out])
           [pid, Process.detach(pid)]
         rescue SystemCallError => e
           env[:ui].error "Notify-forwarder: Could not start '#{command.join(' ')}': #{e.message}"
@@ -82,6 +85,7 @@ module VagrantPlugins
             return unless path
 
             started = []
+            Utils.host_watcher_log(env).write('')
 
             env[:machine].config.vm.synced_folders.each do |id, options|
               unless options[:disabled]

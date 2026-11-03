@@ -131,6 +131,10 @@ module VagrantPlugins
         env[:machine].data_dir.join('notify_watcher_host_pid')
       end
 
+      def self.host_watcher_log(env)
+        env[:machine].data_dir.join('notify_watcher_host.log')
+      end
+
       def self.watcher_identity(pid)
         return unless pid.to_s.match?(/\A[1-9][0-9]*\z/) && pid.to_i > 1
 

@@ -103,6 +103,11 @@ leave a watcher behind. This requires a reachable SSH endpoint; prolonged SSH
 outages stop forwarding even if the VM is otherwise still running. Start or reload
 the machine to restart forwarding after such an outage.
 
+Watchers hold no descriptor of the `vagrant` that started them, so a pipe or a
+command substitution around `vagrant up` ends when `vagrant` does. What they print
+goes to `notify_watcher_host.log` in the machine's data directory
+(`.vagrant/machines/<name>/<provider>/`), emptied at each start.
+
 PID records include the process start time and complete command line. Cleanup
 signals only matching processes. Old PID-only records cannot prove ownership and
 are discarded without signalling those processes.
