@@ -10,7 +10,6 @@ $LOAD_PATH.unshift(File.expand_path('../lib', __dir__))
 require 'vagrant'
 require 'vagrant-notify-forwarder/config'
 require 'vagrant-notify-forwarder/utils'
-require 'vagrant-notify-forwarder/action/check_boot_state'
 require 'vagrant-notify-forwarder/action/start_host_forwarder'
 require 'vagrant-notify-forwarder/action/start_client_forwarder'
 require 'vagrant-notify-forwarder/action/stop_host_forwarder'
@@ -36,10 +35,15 @@ RSpec.shared_context 'middleware env' do
 end
 
 RSpec.configure do |config|
+  # A port the host happens to be using must not change what an example sees.
+  config.before do |example|
+    next if example.metadata[:real_ports]
+
+    allow(VagrantPlugins::VagrantNotifyForwarder::Utils).to receive(:udp_port_free?).and_return(true)
+  end
   config.order = :random
   config.disable_monkey_patching!
   config.mock_with :rspec do |mocks|
     mocks.verify_partial_doubles = true
   end
-  config.before { $BOOT_SAVED = false }
 end

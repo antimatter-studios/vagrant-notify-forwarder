@@ -74,11 +74,15 @@ module VagrantPlugins
           Utils.stop_host_watchers(env)
 
           if env[:machine].config.notify_forwarder.enable
-            port = env[:machine].config.notify_forwarder.port
+            port = Utils.choose_port(env)
             env[:machine].config.vm.network :forwarded_port, host: port, guest: port, host_ip: '127.0.0.1', protocol: 'udp', auto_correct: true
           end
 
-          @app.call env
+          begin
+            @app.call env
+          ensure
+            Utils.release_port_claim(env)
+          end
 
           if env[:machine].config.notify_forwarder.enable
             path = ensure_binary_downloaded env

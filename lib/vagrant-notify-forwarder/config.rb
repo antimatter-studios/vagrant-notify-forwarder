@@ -44,7 +44,7 @@ module VagrantPlugins
         @port = 29324 if @port == UNSET_VALUE
         @port = auto_correct_port(@port)
         @enable = true if @enable == UNSET_VALUE
-        @run_as_root = true if @run_as_root == UNSET_VALUE
+        @run_as_root = false if @run_as_root == UNSET_VALUE
         @binaries = prepare_binaries(@binaries)
       end
 

@@ -1,0 +1,222 @@
+require 'digest'
+require 'shellwords'
+
+module VagrantPlugins
+  module VagrantNotifyForwarder
+    # Installs the receiver in the guest and keeps it running. Each step compares
+    # first, so running this against a guest that already has it, on a resume or a
+    # second `up`, uploads nothing and restarts nothing.
+    class GuestReceiver
+      SYSTEM_DIRECTORY = '/usr/local/libexec/notify-forwarder'.freeze
+      RUNTIME_DIRECTORY = '/run/notify-forwarder'.freeze
+      USER_DIRECTORY = '.local/libexec/notify-forwarder'.freeze
+      SYSTEMD_RUNTIME = '/run/systemd/system'.freeze
+      SERVICE = 'notify-forwarder.service'.freeze
+      UNIT_PATH = "/etc/systemd/system/#{SERVICE}".freeze
+      LEGACY_BINARY = '/tmp/notify-forwarder'.freeze
+      BINARY_NAME = 'notify-forwarder'.freeze
+      USER_NAME = /\A[a-zA-Z_][a-zA-Z0-9_.-]*\z/.freeze
+      NOT_RUNNING = 3
+
+      def initialize(env, binary, port)
+        @ui = env[:ui]
+        @communicate = env[:machine].communicate
+        settings = env[:machine].config.notify_forwarder
+        @binary = binary
+        @port = Integer(port)
+        @run_as_root = settings.run_as_root
+        @digest = Digest::SHA256.file(binary).hexdigest
+      end
+
+      # Returns whether the receiver was left running.
+      def ensure_running
+        user = guest_user
+        unless user.match?(USER_NAME)
+          @ui.error "Notify-forwarder: Unusable guest user name #{user.inspect}; the receiver was not started"
+          return false
+        end
+
+        privileged = @communicate.test('sudo -n true')
+        stop_legacy_receiver(privileged)
+
+        if privileged
+          changed = install_binary(SYSTEM_DIRECTORY, true)
+          if systemd?
+            ensure_service(user, changed)
+          else
+            ensure_process(SYSTEM_DIRECTORY, prepare_runtime_directory(user), changed, @run_as_root)
+          end
+        else
+          if @run_as_root
+            @ui.error 'Notify-forwarder: run_as_root is set but passwordless sudo is not available; the receiver runs as the SSH user'
+          end
+          directory = File.join(guest_home, USER_DIRECTORY)
+          changed = install_binary(directory, false)
+          ensure_process(directory, directory, changed, false)
+        end
+      end
+
+      private
+
+      def capture(command)
+        output = ''
+        @communicate.execute(command) { |type, data| output += data if type == :stdout }
+        output
+      end
+
+      # A login shell can print before the command does, so the answer is the last line.
+      def last_line(command)
+        capture(command).lines.last.to_s.strip
+      end
+
+      def guest_user
+        last_line('id -un')
+      end
+
+      def guest_home
+        last_line('printf "%s\n" "$HOME"')
+      end
+
+      def systemd?
+        @communicate.test("test -d #{quote(SYSTEMD_RUNTIME)} && command -v systemctl")
+      end
+
+      # In a subshell, so that `set -e` ends with these lines. Vagrant reads them
+      # into a login shell and then sends `exit`, so the logout file would run with
+      # it still on. Debian's ends in clear_console, which returns 1 without a
+      # console, and the shell would then report 1 for a script that succeeded.
+      def strictly(*lines)
+        ['(', 'set -e', *lines, ')'].join("\n")
+      end
+
+      def quote(value)
+        Shellwords.escape(value.to_s)
+      end
+
+      # An earlier version of this plugin ran the receiver from here, which holds
+      # the port the service needs.
+      def stop_legacy_receiver(privileged)
+        legacy = quote(LEGACY_BINARY)
+        @communicate.execute(
+          "if [ -e #{legacy} ]; then pkill -f #{quote("^#{Regexp.escape(LEGACY_BINARY)} receive")} || true; rm -f #{legacy}; fi",
+          sudo: privileged, error_check: false
+        )
+      end
+
+      def digest_matches(target)
+        %([ "$(sha256sum #{quote(target)} 2>/dev/null | cut -d' ' -f1)" = #{@digest} ])
+      end
+
+      # Uploads only into a new private directory. Nothing is ever run from it, so
+      # neither a name another guest user chose first nor a noexec /tmp matters.
+      # Returns whether the binary was replaced.
+      def install_binary(directory, privileged)
+        target = File.join(directory, BINARY_NAME)
+        return false if @communicate.test(digest_matches(target), sudo: privileged)
+
+        staging = last_line('mktemp -d "${TMPDIR:-/tmp}/nf-receiver.XXXXXX"')
+        staged = File.join(staging, BINARY_NAME)
+        @communicate.upload(@binary.to_s, staged)
+        owner = privileged ? '-o root -g root ' : ''
+        directory_mode = privileged ? '755' : '700'
+        @communicate.execute(
+          strictly(
+            "install -d #{owner}-m #{directory_mode} #{quote(directory)}",
+            "install #{owner}-m 755 #{quote(staged)} #{quote("#{target}.new")}",
+            "mv -f #{quote("#{target}.new")} #{quote(target)}",
+            "rm -f #{quote(staged)}",
+            "rmdir #{quote(staging)}",
+            digest_matches(target)
+          ),
+          sudo: privileged
+        )
+        true
+      end
+
+      def unit(user)
+        <<~UNIT
+          [Unit]
+          Description=notify-forwarder receiver, managed by vagrant-notify-forwarder
+          After=network.target
+
+          [Service]
+          ExecStart=#{File.join(SYSTEM_DIRECTORY, BINARY_NAME)} receive -p #{@port}
+          User=#{@run_as_root ? 'root' : user}
+          Restart=on-failure
+          RestartSec=5
+          NoNewPrivileges=true
+
+          [Install]
+          WantedBy=multi-user.target
+        UNIT
+      end
+
+      def ensure_service(user, changed)
+        status = @communicate.execute(
+          strictly(
+            "restart=#{changed ? 1 : 0}",
+            'wanted=$(mktemp "${TMPDIR:-/tmp}/nf-receiver.XXXXXX")',
+            %(printf %s #{quote(unit(user))} > "$wanted"),
+            %(if ! cmp -s "$wanted" #{quote(UNIT_PATH)}; then),
+            %(  install -o root -g root -m 644 "$wanted" #{quote(UNIT_PATH)}),
+            '  systemctl daemon-reload',
+            '  restart=1',
+            'fi',
+            'rm -f "$wanted"',
+            "systemctl enable #{SERVICE} >/dev/null 2>&1",
+            %(if [ "$restart" = 1 ]; then systemctl restart #{SERVICE}; else systemctl start #{SERVICE}; fi),
+            'sleep 1',
+            # A receiver that exits cleanly is allowed: `inactive` is not a failure.
+            "case \"$(systemctl is-active #{SERVICE} || true)\" in failed|activating) exit #{NOT_RUNNING} ;; esac"
+          ),
+          sudo: true, error_check: false
+        )
+        return true if status.zero?
+
+        @ui.error "Notify-forwarder: The guest service did not stay up; see `journalctl -u notify-forwarder` in the guest"
+        false
+      end
+
+      def prepare_runtime_directory(user)
+        owner = @run_as_root ? 'root' : user
+        @communicate.execute("install -d -o #{owner} -m 755 #{quote(RUNTIME_DIRECTORY)}", sudo: true)
+        RUNTIME_DIRECTORY
+      end
+
+      # Without systemd nothing restarts the receiver after a reboot until the next
+      # `up`. The recorded process is checked by its arguments before it is trusted
+      # or signalled, because a PID from before a reboot can belong to anything now.
+      def ensure_process(directory, state_directory, changed, as_root)
+        target = File.join(directory, BINARY_NAME)
+        pidfile = File.join(state_directory, 'receiver.pid')
+        status = @communicate.execute(
+          [
+            "target=#{quote(target)}",
+            "pidfile=#{quote(pidfile)}",
+            "port=#{@port}",
+            'pid=$(cat "$pidfile" 2>/dev/null || true)',
+            'running=',
+            'if [ -n "$pid" ]; then running=$(ps -o args= -p "$pid" 2>/dev/null || true); fi',
+            'case "$running" in',
+            '  *"$target receive -p $port")',
+            changed ? '    kill "$pid" ;;' : '    exit 0 ;;',
+            '  *"$target receive -p "*)',
+            '    kill "$pid" ;;',
+            'esac',
+            %(nohup sh -c 'echo $$ > "$1"; shift; exec "$@"' sh "$pidfile" "$target" receive -p "$port" </dev/null >/dev/null 2>&1 &),
+            'child=$!',
+            'sleep 1',
+            'if ! kill -0 "$child" 2>/dev/null; then',
+            "  wait \"$child\" || exit #{NOT_RUNNING}",
+            'fi'
+          ].join("\n"),
+          sudo: as_root, error_check: false
+        )
+        return true if status.zero?
+
+        @ui.error "Notify-forwarder: The guest receiver exited at once; run '#{target} receive -p #{@port}' in the guest to see why"
+        false
+      end
+    end
+  end
+end

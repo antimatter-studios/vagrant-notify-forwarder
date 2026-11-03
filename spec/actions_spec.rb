@@ -3,15 +3,6 @@ require_relative 'spec_helper'
 RSpec.describe 'action middleware' do
   include_context 'middleware env'
 
-  it 'continues the enabled boot chain and records a saved machine' do
-    allow(state).to receive(:id).and_return(:saved)
-    expect(app).to receive(:call).with(env)
-
-    VagrantPlugins::VagrantNotifyForwarder::Action::CheckBootState.new(app, env).call(env)
-
-    expect($BOOT_SAVED).to eq(true)
-  end
-
   it 'leaves the disabled host start chain intact without adding a port' do
     allow(settings).to receive(:enable).and_return(false)
     expect(app).to receive(:call).with(env)

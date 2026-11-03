@@ -1,4 +1,5 @@
 require 'vagrant-notify-forwarder/utils'
+require 'vagrant-notify-forwarder/guest_receiver'
 
 module VagrantPlugins
   module VagrantNotifyForwarder
@@ -33,24 +34,16 @@ module VagrantPlugins
         def call(env)
           @app.call env
 
-          return if $BOOT_SAVED
-
           return unless env[:machine].config.notify_forwarder.enable
 
           path = ensure_binary_downloaded env
           return unless path
 
-          port = env[:machine].config.notify_forwarder.port
+          port = Utils.current_port(env)
 
-          start_command = "nohup /tmp/notify-forwarder receive -p #{port} &"
-
-          if env[:machine].config.notify_forwarder.run_as_root
-            start_command = "sudo #{start_command}"
-          end
-
-          env[:machine].communicate.upload(path, "/tmp/notify-forwarder")
           env[:ui].output("Starting notify-forwarder ...")
-          env[:machine].communicate.execute(start_command)
+          return unless GuestReceiver.new(env, path, port).ensure_running
+
           env[:ui].detail("Notify-forwarder: guest listening for file change notifications on 0.0.0.0:#{port}.")
         end
       end

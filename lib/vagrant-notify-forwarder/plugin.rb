@@ -1,23 +1,18 @@
 require 'vagrant'
 
-$BOOT_SAVED = false
-
 module VagrantPlugins
   module VagrantNotifyForwarder
     class Plugin < Vagrant.plugin('2')
       name 'vagrant-notify-forwarder'
       description 'Wrapper around the notify-forwarder file system event forwarder'
 
-      # Boot: check saved state, start host watcher, then start guest receiver.
+      # Boot and resume: start host watcher, then start guest receiver.
       # All hooks use provider-agnostic Vagrant::Action::Builtin classes so this
       # works with VirtualBox, VMware, libvirt, QEMU, etc.
       register_boot_hooks = lambda do |hook|
         require_relative 'action/start_host_forwarder'
         require_relative 'action/start_client_forwarder'
-        require_relative 'action/check_boot_state'
 
-        hook.before Vagrant::Action::Builtin::Provision,
-                    VagrantPlugins::VagrantNotifyForwarder::Action::CheckBootState
         hook.after Vagrant::Action::Builtin::Provision,
                    VagrantPlugins::VagrantNotifyForwarder::Action::StartHostForwarder
         hook.after VagrantPlugins::VagrantNotifyForwarder::Action::StartHostForwarder,

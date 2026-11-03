@@ -3,6 +3,7 @@ require 'securerandom'
 require 'uri'
 require 'json'
 require 'open3'
+require 'socket'
 require 'vagrant'
 require 'vagrant/util/downloader'
 
@@ -22,7 +23,23 @@ module VagrantPlugins
       end
     end
 
+    class PortUnavailable < Vagrant::Errors::VagrantError
+      def initialize(first, last)
+        @unavailable = "Notify-forwarder: No free UDP port on 127.0.0.1 in #{first}-#{last}. " \
+                       'Set config.notify_forwarder.port to another range.'
+        super()
+      end
+
+      def error_message
+        @unavailable
+      end
+    end
+
     class Utils
+      PORT_ATTEMPTS = 10
+      @port_claims = {}
+      @port_claims_lock = Mutex.new
+
       @@OS_NAMES = {
           "Linux" => :linux,
           "Darwin" => :darwin,
@@ -125,6 +142,71 @@ module VagrantPlugins
         URI.parse(url)
       rescue URI::InvalidURIError
         nil
+      end
+
+      # States in which the guest and any forward are what the last start set up.
+      RETAINED_STATES = [:running, :saved, :paused].freeze
+
+      def self.port_file(env)
+        env[:machine].data_dir.join('notify_forwarder_port')
+      end
+
+      def self.recorded_port(env)
+        path = port_file(env)
+        return unless path.file?
+
+        value = path.read.strip
+        value.to_i if value.match?(/\A[1-9][0-9]*\z/)
+      end
+
+      # Config picks a free port on every command, and a running machine's own port
+      # is not free, so a machine that kept its forward keeps the port it recorded.
+      # Any other start looks again, because every machine in a Vagrantfile reads its
+      # configuration before the first one boots.
+      def self.choose_port(env)
+        machine = env[:machine]
+        retained = RETAINED_STATES.include?(machine.state.id) ? recorded_port(env) : nil
+        port = retained || claim_free_port(env, machine.config.notify_forwarder.port)
+        port_file(env).write("#{port}\n")
+        port
+      end
+
+      def self.udp_port_free?(port)
+        socket = UDPSocket.new
+        socket.bind('127.0.0.1', port)
+        true
+      rescue SystemCallError
+        false
+      ensure
+        socket.close if socket
+      end
+
+      # A claim covers the time between choosing a port and the provider binding it,
+      # when a machine starting beside this one would find the port still free.
+      def self.claim_free_port(env, first)
+        owner = env[:machine].data_dir.to_s
+        @port_claims_lock.synchronize do
+          PORT_ATTEMPTS.times do |offset|
+            port = first + offset
+            next if @port_claims.fetch(port, owner) != owner || !udp_port_free?(port)
+
+            @port_claims.delete_if { |_port, holder| holder == owner }
+            @port_claims[port] = owner
+            return port
+          end
+        end
+        raise PortUnavailable.new(first, first + PORT_ATTEMPTS - 1)
+      end
+
+      def self.release_port_claim(env)
+        owner = env[:machine].data_dir.to_s
+        @port_claims_lock.synchronize do
+          @port_claims.delete_if { |_port, holder| holder == owner }
+        end
+      end
+
+      def self.current_port(env)
+        recorded_port(env) || env[:machine].config.notify_forwarder.port
       end
 
       def self.host_pidfile(env)
