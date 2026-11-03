@@ -4,6 +4,12 @@ module VagrantPlugins
   module VagrantNotifyForwarder
     module Action
       class StartHostForwarder
+        # A watcher still running this many seconds after the last one started is
+        # taken to have started. macOS checks an executable on its first run: a new
+        # one that exits at once took 0.3 seconds on an idle host and up to 2.3 with
+        # twelve starting together.
+        WATCHER_STARTUP_GRACE = 3
+
         def initialize(app, env)
           @app = app
         end
@@ -20,14 +26,32 @@ module VagrantPlugins
           end
         end
 
+        # Takes an argument list so no shell ever reads a path. Returns the pid and
+        # the thread that reaps it, or nil if the watcher could not be started.
         def start_watcher(env, command)
-          pid = Process.spawn command
-          Process.detach(pid)
+          pid = Process.spawn(*command)
+          [pid, Process.detach(pid)]
+        rescue SystemCallError => e
+          env[:ui].error "Notify-forwarder: Could not start '#{command.join(' ')}': #{e.message}"
+          nil
+        end
+
+        # Records a watcher that is still running at the deadline, and reports one
+        # that is not. Returns whether it is running.
+        def confirm_watcher(env, command, pid, reaper, deadline)
+          remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+          if reaper.join([remaining, 0].max)
+            env[:ui].error "Notify-forwarder: '#{command.join(' ')}' exited at once (#{reaper.value})"
+            return false
+          end
 
           pidfile = Utils.host_pidfile env
           pidfile.open('a+') do |f|
             f.write("#{pid}\n")
           end
+
+          true
         end
 
         def call(env)
@@ -42,16 +66,26 @@ module VagrantPlugins
             path = ensure_binary_downloaded env
             return unless path
 
+            started = []
+
             env[:machine].config.vm.synced_folders.each do |id, options|
               unless options[:disabled]
                 hostpath = File.expand_path(options[:hostpath], env[:root_path])
                 guestpath = options[:guestpath]
+                command = [path.to_s, 'watch', '-c', "127.0.0.1:#{port}", hostpath, guestpath]
 
-                args = "watch -c 127.0.0.1:#{port} #{hostpath} #{guestpath}"
-                start_watcher env, "#{path} #{args}"
-                env[:ui].detail("Notify-forwarder: host sending file change notifications to 127.0.0.1:#{port}")
-                env[:ui].detail("Notify-forwarder: host forwarding notifications on #{hostpath} to #{guestpath}")
+                pid, reaper = start_watcher env, command
+                started << [command, pid, reaper, hostpath, guestpath] if pid
               end
+            end
+
+            deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + WATCHER_STARTUP_GRACE
+
+            started.each do |command, pid, reaper, hostpath, guestpath|
+              next unless confirm_watcher env, command, pid, reaper, deadline
+
+              env[:ui].detail("Notify-forwarder: host sending file change notifications to 127.0.0.1:#{port}")
+              env[:ui].detail("Notify-forwarder: host forwarding notifications on #{hostpath} to #{guestpath}")
             end
           end
         end
