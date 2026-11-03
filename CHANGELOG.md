@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.7.5
+
+- Binary checksums are written into the gem when it is released
+
+## v0.7.4
+
+- Hooks use provider-agnostic actions, so every provider gets them
+
+## v0.7.2
+
+- No change beyond the version
+
+## v0.7.1
+
+- Renamed the gem to `vagrant-notify-forwarder-christhomas`
+- Fixed the release workflow's RubyGems credentials
+
 ## v0.7.0
 
 - Added Linux armv7l (ARM32) guest support

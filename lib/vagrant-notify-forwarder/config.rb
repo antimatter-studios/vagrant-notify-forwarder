@@ -7,7 +7,7 @@ module VagrantPlugins
       attr_accessor :binaries
 
       NOTIFY_FORWARDER_VERSION = 'v1.1.0'.freeze
-      NOTIFY_FORWARDER_BASE_URL = "https://github.com/christhomas/notify-forwarder/releases/download/#{NOTIFY_FORWARDER_VERSION}".freeze
+      NOTIFY_FORWARDER_BASE_URL = "https://github.com/antimatter-studios/notify-forwarder/releases/download/#{NOTIFY_FORWARDER_VERSION}".freeze
 
       # sha256 placeholders are replaced at gem-build time by the release workflow
       DEFAULT_BINARIES = {

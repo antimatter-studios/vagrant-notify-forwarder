@@ -12,6 +12,7 @@ RSpec.describe 'a watcher and the vagrant that started it' do
 
   before do
     directory.join('id').write('test-machine')
+    directory.join('project').mkpath
     stub_const('VagrantPlugins::VagrantNotifyForwarder::Action::StartHostForwarder::WATCHER_STARTUP_GRACE', 0.5)
     allow(vm).to receive(:network)
     allow(vm).to receive(:synced_folders).and_return(

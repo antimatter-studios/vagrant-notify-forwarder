@@ -1,6 +1,6 @@
 # Vagrant file system notification forwarder plugin
 
-A vagrant plugin that uses [notify-forwarder](https://github.com/mhallin/notify-forwarder) to
+A vagrant plugin that uses [notify-forwarder](https://github.com/antimatter-studios/notify-forwarder) to
 forward file system events from the host to the guest automatically on all shared folders.
 
 This is useful for auto reloading file systems that rebuild when files change. Normally, they have
@@ -9,26 +9,16 @@ inotify or similar for improved performance and reduced CPU usage.
 
 ## Installation
 
-### Via Homebrew (recommended)
-
 ```bash
-brew install antimatter-studios/tap/vagrant-notify-forwarder
-```
-
-This downloads the gem and runs `vagrant plugin install` automatically.
-
-### Manual install
-
-```bash
-vagrant plugin install vagrant-notify-forwarder2
+vagrant plugin install vagrant-notify-forwarder-christhomas
 ```
 
 Or from a specific release:
 
 ```bash
-curl -fsSL -o /tmp/vagrant-notify-forwarder2.gem \
-  https://github.com/christhomas/vagrant-notify-forwarder/releases/download/v0.6.3/vagrant-notify-forwarder2-0.6.3.gem
-vagrant plugin install /tmp/vagrant-notify-forwarder2.gem
+curl -fsSL -o /tmp/vagrant-notify-forwarder-christhomas.gem \
+  https://github.com/antimatter-studios/vagrant-notify-forwarder/releases/download/v0.7.5/vagrant-notify-forwarder-christhomas-0.7.5.gem
+vagrant plugin install /tmp/vagrant-notify-forwarder-christhomas.gem
 ```
 
 After installing, reload your Vagrant environment:
@@ -101,8 +91,8 @@ config.notify_forwarder.binaries = {
     url: "https://example.com/notify-forwarder-osx-arm64",
     sha256: "deadbeef..."
   },
-  [:linux, :riscv64] => [
-    "https://example.com/notify-forwarder-linux-riscv64",
+  [:freebsd, :x86_64] => [
+    "https://example.com/notify-forwarder-freebsd-x86_64",
     "cafebabe..."
   ]
 }
@@ -117,8 +107,12 @@ Cleanup runs at the start of halt, suspend, destroy and reload actions, independ
 of provider-specific middleware. Existing registered watchers are also stopped before
 the next start, even when forwarding has since been disabled or the provider fails.
 
-Each host watcher runs under a small supervisor. It owns and reaps the forwarder
-process, stops it on cleanup, and exits if the machine ID disappears or changes.
+One host watcher serves all of a machine's synced folders. A folder whose host path
+does not exist is reported and left out, because the forwarder stops on a path it
+cannot resolve.
+
+The watcher runs under a small supervisor. It owns and reaps the forwarder process,
+stops it on cleanup, and exits if the machine ID disappears or changes.
 It also probes the machine's SSH endpoint every five seconds and stops after three
 consecutive failures to receive an SSH banner, so an externally stopped VM does not
 leave a watcher behind. This requires a reachable SSH endpoint; prolonged SSH
@@ -145,6 +139,9 @@ The plugin downloads binaries for supported platforms:
 | Linux x86_64 | ✓ | ✓ |
 | macOS arm64 | ✓ | — |
 | macOS x86_64 | ✓ | — |
+
+FreeBSD is detected and has no default binary. Supply one through
+`config.notify_forwarder.binaries`.
 
 ## Development
 

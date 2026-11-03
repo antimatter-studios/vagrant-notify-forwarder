@@ -69,7 +69,8 @@ module VagrantPlugins
         sha256sum = sha256sum.downcase if sha256sum
 
         unless url && sha256sum
-          env[:ui].error "Notify-forwarder: No binary configured for host '#{os}' '#{hardware}'"
+          env[:ui].error "Notify-forwarder: No binary configured for '#{os}' '#{hardware}'. " \
+                         'Set one through config.notify_forwarder.binaries.'
           return
         end
 

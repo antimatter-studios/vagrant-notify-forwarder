@@ -70,6 +70,21 @@ module VagrantPlugins
           Utils.record_host_watcher(env, pid, reaper)
         end
 
+        # Host and guest path pairs. The binary aborts on a path it cannot resolve,
+        # so one missing folder left in would end the watcher for all of them.
+        def watched_folders(env)
+          env[:machine].config.vm.synced_folders.each_value.with_object([]) do |options, folders|
+            next if options[:disabled]
+
+            hostpath = File.expand_path(options[:hostpath], env[:root_path])
+            if File.exist?(hostpath)
+              folders << [hostpath, options[:guestpath]]
+            else
+              env[:ui].error "Notify-forwarder: Not watching '#{hostpath}': it does not exist"
+            end
+          end
+        end
+
         def call(env)
           Utils.stop_host_watchers(env)
 
@@ -88,26 +103,20 @@ module VagrantPlugins
             path = ensure_binary_downloaded env
             return unless path
 
-            started = []
+            folders = watched_folders(env)
+            return if folders.empty?
+
             Utils.host_watcher_log(env).write('')
 
-            env[:machine].config.vm.synced_folders.each do |id, options|
-              unless options[:disabled]
-                hostpath = File.expand_path(options[:hostpath], env[:root_path])
-                guestpath = options[:guestpath]
-                command = [path.to_s, 'watch', '-c', "127.0.0.1:#{port}", hostpath, guestpath]
-
-                pid, reaper = start_watcher env, command
-                started << [command, pid, reaper, hostpath, guestpath] if pid
-              end
-            end
+            command = [path.to_s, 'watch', '-c', "127.0.0.1:#{port}", *folders.flatten]
+            pid, reaper = start_watcher env, command
+            return unless pid
 
             deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + WATCHER_STARTUP_GRACE
+            return unless confirm_watcher env, command, pid, reaper, deadline
 
-            started.each do |command, pid, reaper, hostpath, guestpath|
-              next unless confirm_watcher env, command, pid, reaper, deadline
-
-              env[:ui].detail("Notify-forwarder: host sending file change notifications to 127.0.0.1:#{port}")
+            env[:ui].detail("Notify-forwarder: host sending file change notifications to 127.0.0.1:#{port}")
+            folders.each do |hostpath, guestpath|
               env[:ui].detail("Notify-forwarder: host forwarding notifications on #{hostpath} to #{guestpath}")
             end
           end
