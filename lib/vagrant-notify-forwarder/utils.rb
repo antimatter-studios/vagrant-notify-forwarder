@@ -1,8 +1,25 @@
+require 'digest'
+require 'securerandom'
 require 'uri'
+require 'vagrant'
 require 'vagrant/util/downloader'
 
 module VagrantPlugins
   module VagrantNotifyForwarder
+    # A VagrantError, so Vagrant reports the message and its recovery does not
+    # destroy a machine that has already booted.
+    class BinaryChecksumMismatch < Vagrant::Errors::VagrantError
+      def initialize(url, expected, actual)
+        @mismatch = "Notify-forwarder: Checksum mismatch for '#{url}': " \
+                    "expected sha256 #{expected}, got #{actual}. The download was deleted."
+        super()
+      end
+
+      def error_message
+        @mismatch
+      end
+    end
+
     class Utils
       @@OS_NAMES = {
           "Linux" => :linux,
@@ -30,6 +47,7 @@ module VagrantPlugins
         config = env.fetch(:machine).config.notify_forwarder
         download_map = config.binaries
         url, sha256sum = download_map[[os, hardware]]
+        sha256sum = sha256sum.downcase if sha256sum
 
         unless url && sha256sum
           env[:ui].error "Notify-forwarder: No binary configured for host '#{os}' '#{hardware}'"
@@ -54,13 +72,30 @@ module VagrantPlugins
 
         if should_download
           env[:ui].detail 'Notify-forwarder: Downloading client'
-          downloader = Vagrant::Util::Downloader.new expanded_url, path
-          downloader.download!
+          download_verified expanded_url, path, sha256sum
         end
 
         File.chmod(0755, path)
 
         path
+      end
+
+      # Parallel `up`s share tmp_path, so each downloads to its own name and only
+      # a verified file ever appears at the path that gets executed.
+      def self.download_verified(url, path, sha256sum)
+        partial = "#{path}.#{Process.pid}.#{SecureRandom.hex(4)}.part"
+
+        begin
+          Vagrant::Util::Downloader.new(url, partial).download!
+
+          digest = Digest::SHA256.file(partial).hexdigest
+          raise BinaryChecksumMismatch.new(url, sha256sum, digest) unless digest == sha256sum
+
+          File.chmod(0755, partial)
+          File.rename(partial, path)
+        ensure
+          File.delete(partial) if File.exist?(partial)
+        end
       end
 
       def self.expand_binary_url(url)
