@@ -9,11 +9,9 @@ module VagrantPlugins
         end
 
         def call(env)
-          @app.call env
-
-          return unless env[:machine].config.notify_forwarder.enable
-
           Utils.stop_host_watchers(env)
+
+          @app.call env
         end
       end
     end

@@ -89,6 +89,24 @@ config.notify_forwarder.binaries = {
 You may supply each entry either as an array `[url, sha256]` or a hash with `:url`/`:sha256` keys.
 Entries you omit continue using the built-in defaults.
 
+## Watcher lifecycle
+
+Cleanup runs at the start of halt, suspend, destroy and reload actions, independently
+of provider-specific middleware. Existing registered watchers are also stopped before
+the next start, even when forwarding has since been disabled or the provider fails.
+
+Each host watcher runs under a small supervisor. It owns and reaps the forwarder
+process, stops it on cleanup, and exits if the machine ID disappears or changes.
+It also probes the machine's SSH endpoint every five seconds and stops after three
+consecutive failures to receive an SSH banner, so an externally stopped VM does not
+leave a watcher behind. This requires a reachable SSH endpoint; prolonged SSH
+outages stop forwarding even if the VM is otherwise still running. Start or reload
+the machine to restart forwarding after such an outage.
+
+PID records include the process start time and complete command line. Cleanup
+signals only matching processes. Old PID-only records cannot prove ownership and
+are discarded without signalling those processes.
+
 ## Supported platforms
 
 The plugin downloads binaries for supported platforms:
@@ -113,6 +131,22 @@ BUNDLE_GEMFILE=spec/Gemfile bundle exec rspec --require ./spec/spec_helper.rb
 The suite stubs `Vagrant.plugin(2, :config)`, the downloader and the middleware
 environment. It does not boot a VM or download forwarder binaries. Pull requests
 run the same specs on Ruby 3.1 and 3.3; release publishing is separate.
+
+An additional integration suite reads the installed QEMU and VirtualBox action
+chains and uses Vagrant's real hook builder. It does not start a VM or change
+installed plugins. Run it with a Ruby environment containing Vagrant and RSpec:
+
+```bash
+VAGRANT_HOME="$HOME/tmp/notify-forwarder-test-home" \
+TEST_TMPDIR="$HOME/tmp" \
+VAGRANT_QEMU_ACTION="/path/to/vagrant-qemu/lib/vagrant-qemu/action.rb" \
+VAGRANT_VIRTUALBOX_ACTION="/path/to/vagrant/plugins/providers/virtualbox/action.rb" \
+ruby spec/integration/provider_chains.rb
+```
+
+QEMU 0.6.0 does not implement suspend. Its halt, destroy and reload chains and
+VirtualBox's halt, suspend, destroy and reload chains are exercised. The regular
+suite also checks registration of all four provider-independent lifecycle hooks.
 
 Use Bundler and the project `Rakefile` to keep all tooling local to the repository.
 

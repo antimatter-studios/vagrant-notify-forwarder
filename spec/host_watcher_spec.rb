@@ -27,6 +27,7 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartHostForwarde
   end
 
   before do
+    directory.join('id').write('test-machine')
     grace(0.05)
     allow(vm).to receive(:network)
     allow(vm).to receive(:synced_folders).and_return(

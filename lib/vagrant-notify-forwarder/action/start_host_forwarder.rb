@@ -1,4 +1,5 @@
 require 'vagrant-notify-forwarder/utils'
+require 'rbconfig'
 
 module VagrantPlugins
   module VagrantNotifyForwarder
@@ -29,7 +30,24 @@ module VagrantPlugins
         # Takes an argument list so no shell ever reads a path. Returns the pid and
         # the thread that reaps it, or nil if the watcher could not be started.
         def start_watcher(env, command)
-          pid = Process.spawn(*command)
+          unless File.executable?(command.first)
+            error = File.exist?(command.first) ? Errno::EACCES : Errno::ENOENT
+            raise error, command.first
+          end
+
+          machine = env.fetch(:machine)
+          ssh = machine.ssh_info
+          unless ssh && ssh[:host] && ssh[:port] && machine.id
+            env[:ui].error 'Notify-forwarder: Cannot watch a machine without its ID and SSH endpoint'
+            return
+          end
+
+          options = {
+            command: command, host: ssh[:host], port: ssh[:port],
+            machine_id_path: machine.data_dir.join('id').to_s, machine_id: machine.id
+          }
+          supervisor = File.expand_path('../host_watcher.rb', __dir__)
+          pid = Process.spawn(RbConfig.ruby, supervisor, JSON.generate(options))
           [pid, Process.detach(pid)]
         rescue SystemCallError => e
           env[:ui].error "Notify-forwarder: Could not start '#{command.join(' ')}': #{e.message}"
@@ -50,6 +68,8 @@ module VagrantPlugins
         end
 
         def call(env)
+          Utils.stop_host_watchers(env)
+
           if env[:machine].config.notify_forwarder.enable
             port = env[:machine].config.notify_forwarder.port
             env[:machine].config.vm.network :forwarded_port, host: port, guest: port, host_ip: '127.0.0.1', protocol: 'udp', auto_correct: true

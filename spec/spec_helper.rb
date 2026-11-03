@@ -21,7 +21,7 @@ RSpec.shared_context 'middleware env' do
   let(:config) { double('config', notify_forwarder: settings, vm: vm) }
   let(:state) { double('state', id: :running) }
   let(:communicator) { double('communicator') }
-  let(:machine) { double('machine', config: config, state: state, data_dir: directory, communicate: communicator) }
+  let(:machine) { double('machine', config: config, state: state, data_dir: directory, communicate: communicator, id: 'test-machine', ssh_info: { host: '127.0.0.1', port: 22 }) }
   let(:ui) { double('ui', error: nil, info: nil, detail: nil, output: nil) }
   let(:app) { double('app', call: nil) }
   let(:directory) { Pathname.new(@temporary_directory) }
