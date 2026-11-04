@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.8
+
+- The guest receiver restarts when its roots are mounted after it started, so file notifications keep working after a second boot ([#33](https://github.com/antimatter-studios/vagrant-notify-forwarder/issues/33))
+
 ## v0.7.7
 
 - Version 0.7.6 was tagged and never published, so this is the first release of everything below; a user of 0.7.5 gets all of it at once

@@ -17,7 +17,7 @@ Or from a specific release:
 
 ```bash
 curl -fsSL -o /tmp/vagrant-notify-forwarder-christhomas.gem \
-  https://github.com/antimatter-studios/vagrant-notify-forwarder/releases/download/v0.7.7/vagrant-notify-forwarder-christhomas-0.7.7.gem
+  https://github.com/antimatter-studios/vagrant-notify-forwarder/releases/download/v0.7.8/vagrant-notify-forwarder-christhomas-0.7.8.gem
 vagrant plugin install /tmp/vagrant-notify-forwarder-christhomas.gem
 ```
 
