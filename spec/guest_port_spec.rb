@@ -114,6 +114,7 @@ RSpec.describe 'a guest reached through a login shell' do
     stub_guest_paths(sandbox)
     write_fixture_binary(binary)
     allow(client).to receive(:ensure_binary_downloaded).and_return(binary)
+    allow(vm).to receive(:synced_folders).and_return('project' => { hostpath: directory.to_s, guestpath: '/guest' })
   end
 
   after do

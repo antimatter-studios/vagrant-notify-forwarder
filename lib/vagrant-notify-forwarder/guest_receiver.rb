@@ -17,6 +17,7 @@ module VagrantPlugins
       BINARY_NAME = 'notify-forwarder'.freeze
       USER_NAME = /\A[a-zA-Z_][a-zA-Z0-9_.-]*\z/.freeze
       NOT_RUNNING = 3
+      SYSTEMD_ESCAPES = { '\\' => '\\\\', '"' => '\\"', '$' => '$$', '%' => '%%', "\n" => '\\n', "\r" => '\\r', "\t" => '\\t' }.freeze
 
       def initialize(env, binary, port)
         @ui = env[:ui]
@@ -25,6 +26,8 @@ module VagrantPlugins
         @binary = binary
         @port = Integer(port)
         @run_as_root = settings.run_as_root
+        @roots = env[:machine].config.vm.synced_folders.each_value.reject { |options| options[:disabled] }
+                    .map { |options| options[:guestpath] }.uniq.sort
         @digest = Digest::SHA256.file(binary).hexdigest
       end
 
@@ -38,6 +41,19 @@ module VagrantPlugins
 
         privileged = @communicate.test('sudo -n true')
         stop_legacy_receiver(privileged)
+
+        if @roots.empty?
+          if privileged && systemd?
+            @communicate.execute("systemctl disable --now #{SERVICE}", sudo: true, error_check: false)
+          elsif privileged
+            stop_process(SYSTEM_DIRECTORY, RUNTIME_DIRECTORY, @run_as_root)
+          else
+            directory = File.join(guest_home, USER_DIRECTORY)
+            stop_process(directory, directory, false)
+          end
+          @ui.error 'Notify-forwarder: No enabled synced folders; the guest receiver was stopped and will not start without roots'
+          return false
+        end
 
         if privileged
           changed = install_binary(SYSTEM_DIRECTORY, true)
@@ -140,7 +156,7 @@ module VagrantPlugins
           After=network.target
 
           [Service]
-          ExecStart=#{File.join(SYSTEM_DIRECTORY, BINARY_NAME)} receive -p #{@port}
+          ExecStart=#{File.join(SYSTEM_DIRECTORY, BINARY_NAME)} receive -p #{@port} #{@roots.map { |root| systemd_quote(root) }.join(' ')}
           User=#{@run_as_root ? 'root' : user}
           Restart=on-failure
           RestartSec=5
@@ -149,6 +165,10 @@ module VagrantPlugins
           [Install]
           WantedBy=multi-user.target
         UNIT
+      end
+
+      def systemd_quote(value)
+        '"' + value.gsub(/[\\"$%\n\r\t]/, SYSTEMD_ESCAPES) + '"'
       end
 
       def ensure_service(user, changed)
@@ -188,22 +208,22 @@ module VagrantPlugins
       # or signalled, because a PID from before a reboot can belong to anything now.
       def ensure_process(directory, state_directory, changed, as_root)
         target = File.join(directory, BINARY_NAME)
-        pidfile = File.join(state_directory, 'receiver.pid')
+        arguments = [target, 'receive', '-p', @port.to_s, *@roots]
         status = @communicate.execute(
           [
-            "target=#{quote(target)}",
-            "pidfile=#{quote(pidfile)}",
-            "port=#{@port}",
-            'pid=$(cat "$pidfile" 2>/dev/null || true)',
-            'running=',
-            'if [ -n "$pid" ]; then running=$(ps -o args= -p "$pid" 2>/dev/null || true); fi',
+            *process_state(directory, state_directory),
+            "expected=#{quote(arguments.join(' '))}",
+            "arguments=#{quote(Shellwords.join(arguments))}",
+            "argsfile=#{quote(File.join(state_directory, 'receiver.args'))}",
             'case "$running" in',
-            '  *"$target receive -p $port")',
-            changed ? '    kill "$pid" ;;' : '    exit 0 ;;',
+            '  *"$expected")',
+            %(    if [ #{changed ? 1 : 0} = 0 ] && [ "$(cat "$argsfile" 2>/dev/null)" = "$arguments" ]; then exit 0; fi),
+            '    kill "$pid" ;;',
             '  *"$target receive -p "*)',
             '    kill "$pid" ;;',
             'esac',
-            %(nohup sh -c 'echo $$ > "$1"; shift; exec "$@"' sh "$pidfile" "$target" receive -p "$port" </dev/null >/dev/null 2>&1 &),
+            %((umask 077; printf %s "$arguments" > "$argsfile") || exit #{NOT_RUNNING}),
+            %(nohup sh -c 'echo $$ > "$1"; shift; exec "$@"' sh "$pidfile" #{Shellwords.join(arguments)} </dev/null >/dev/null 2>&1 &),
             'child=$!',
             'sleep 1',
             'if ! kill -0 "$child" 2>/dev/null; then',
@@ -214,8 +234,26 @@ module VagrantPlugins
         )
         return true if status.zero?
 
-        @ui.error "Notify-forwarder: The guest receiver exited at once; run '#{target} receive -p #{@port}' in the guest to see why"
+        @ui.error "Notify-forwarder: The guest receiver exited at once; run #{Shellwords.join(arguments)} in the guest to see why"
         false
+      end
+
+      def process_state(directory, state_directory)
+        [
+          "target=#{quote(File.join(directory, BINARY_NAME))}",
+          "pidfile=#{quote(File.join(state_directory, 'receiver.pid'))}",
+          'pid=$(cat "$pidfile" 2>/dev/null || true)',
+          'running=',
+          'if [ -n "$pid" ]; then running=$(ps -ww -o args= -p "$pid" 2>/dev/null || true); fi'
+        ]
+      end
+
+      def stop_process(directory, state_directory, as_root)
+        @communicate.execute(
+          [*process_state(directory, state_directory),
+           'case "$running" in *"$target receive -p "*) kill "$pid" ;; esac'].join("\n"),
+          sudo: as_root, error_check: false
+        )
       end
     end
   end
