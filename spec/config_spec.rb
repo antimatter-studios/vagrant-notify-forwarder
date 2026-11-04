@@ -31,6 +31,35 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Config do
     config.finalize!
   end
 
+  describe 'port validation' do
+    it 'accepts the default when no port is configured' do
+      config.finalize!
+
+      expect(config.validate(nil).values.flatten).to be_empty
+    end
+
+    [1, 29324, 65535].each do |port|
+      it "accepts the integer port #{port}" do
+        config.port = port
+        config.finalize!
+
+        expect(config.validate(nil).values.flatten).to be_empty
+      end
+    end
+
+    [0, -1, 65536, 70000, 1.5, 29324.0, '29324', 'invalid', nil, true, false].each do |port|
+      it "rejects #{port.inspect}, naming the setting and its valid range" do
+        config.port = port
+        config.finalize!
+
+        errors = config.validate(nil).values.flatten
+
+        expect(errors.length).to eq(1)
+        expect(errors.first).to include('config.notify_forwarder.port', 'integer', '1', '65535')
+      end
+    end
+  end
+
   it 'preserves an explicitly disabled plugin' do
     config.enable = false
     config.finalize!
