@@ -67,8 +67,8 @@ config.notify_forwarder.run_as_root = true
 
 With passwordless `sudo`, the binary is installed at
 `/usr/local/libexec/notify-forwarder/notify-forwarder`, owned by root. On a guest with systemd it
-runs as `notify-forwarder.service`, which restarts on failure and comes back after a reboot inside
-the guest. To stop it after disabling the plugin, run
+runs as `notify-forwarder.service`, which restarts on failure and attempts to start after a reboot
+inside the guest. To stop it after disabling the plugin, run
 `sudo systemctl disable --now notify-forwarder` in the guest.
 
 | Guest | Binary | How it runs |
@@ -87,8 +87,27 @@ to 65535, or one something else in the guest holds. The plugin reports it and th
 The service tries again every 5 seconds, so it recovers once the port is free. A background process
 is not tried again until the next `up`.
 
-The plugin starts the receiver with no root directories, so it acts on a regular file anywhere its
-user may open one for writing, and it prints a warning saying so at each start.
+The receiver is restricted to the guest paths of this machine's enabled synced folders. Disabled
+folders and host paths are not receive roots. The receiver refuses files outside those roots,
+including symlinks that resolve outside them. Changing the enabled folder set restarts the receiver
+at the next `up` or `resume`; changing only their order does not. If no folders are enabled, the
+plugin stops the receiver rather than starting one with unrestricted access.
+
+A receive root that does not resolve is fatal: notify-forwarder exits with status 64, rather than
+silently leaving that root out. After a reboot initiated inside a systemd guest, the service may
+start before Vagrant has mounted the synced folders. While a configured root is missing there is
+no receiver; the service retries every 5 seconds and recovers when the roots are available again.
+Restore them with the synced-folder provider's normal mechanism, such as remounting the folders
+or running `vagrant rsync` for rsync folders. It never falls back to accepting paths everywhere.
+
+This was verified with Debian 12 in a QEMU guest on macOS, using rsync folders including paths
+with spaces. After a reboot initiated inside the guest, a configured root under `/run` was gone:
+the journal recorded exit status 64 and retries 5 seconds apart, with no receiver listening.
+`vagrant rsync` recreated the root, and the next retry started the receiver with the same
+restricted roots, without another plugin start. Rsync destinations outside `/run` remained on
+disk across that reboot; the failure depends on a missing root, not on a reboot alone.
+
+A background receiver does not restart after a guest reboot until the next `vagrant up`.
 
 ### What the receiver does to a file
 

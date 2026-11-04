@@ -31,6 +31,7 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
     stub_const("#{module_name}::UNIT_PATH", unit.to_s)
     stub_const("#{module_name}::LEGACY_BINARY", legacy.to_s)
     write_binary('first')
+    allow(vm).to receive(:synced_folders).and_return('project' => { hostpath: directory.to_s, guestpath: '/guest' })
     allow(middleware).to receive(:ensure_binary_downloaded).and_return(binary)
   end
 
@@ -55,6 +56,7 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
     binary.write(<<~SH)
       #!/bin/sh
       # #{marker}
+      printf '%s\\0' "$@" > "$(dirname "$0")/receiver.argv"
       sleep 30 &
       child=$!
       trap 'kill $child; exit 0' TERM
@@ -86,7 +88,150 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
     false
   end
 
+  def folders(*paths)
+    paths.each_with_index.to_h do |guestpath, index|
+      [index.to_s, { hostpath: directory.join("host #{index}").to_s, guestpath: guestpath }]
+    end
+  end
+
+  shared_examples 'a rooted background receiver' do
+    it 'passes enabled guest roots as separate arguments without interpreting shell syntax' do
+      sentinel = sandbox.join('injected')
+      roots = ["/guest/team's files", %q{/guest/"quotes" \ $HOME %n}, "/guest/$(touch #{sentinel}); literal"]
+      allow(vm).to receive(:synced_folders).and_return(
+        folders(*roots).merge('disabled' => { guestpath: '/disabled', disabled: true })
+      )
+
+      middleware.call(env)
+
+      arguments = process_directory.join('receiver.argv').binread.split("\0")
+      expect(arguments.first(3)).to eq(['receive', '-p', '29324'])
+      expect(arguments.drop(3)).to match_array(roots)
+      expect(sentinel).not_to exist
+    end
+
+    it 'keeps the same process when the root set is unchanged, including spaces' do
+      allow(vm).to receive(:synced_folders).and_return(folders('/guest/a b', '/guest/c'))
+      middleware.call(env)
+      pid = receiver_pid(process_pidfile)
+      allow(vm).to receive(:synced_folders).and_return(folders('/guest/c', '/guest/a b', '/guest/c'))
+
+      middleware.call(env)
+
+      expect(receiver_pid(process_pidfile)).to eq(pid)
+      expect(alive?(pid)).to be(true)
+    end
+
+    it 'replaces the process when an enabled guest root changes' do
+      middleware.call(env)
+      pid = receiver_pid(process_pidfile)
+      allow(vm).to receive(:synced_folders).and_return(folders('/other guest'))
+
+      middleware.call(env)
+
+      expect(stopped?(pid)).to be(true)
+      expect(receiver_pid(process_pidfile)).not_to eq(pid)
+      expect(process_directory.join('receiver.argv').binread.split("\0")).to eq(['receive', '-p', '29324', '/other guest'])
+    end
+
+    it 'distinguishes one root containing a space from two separate roots' do
+      allow(vm).to receive(:synced_folders).and_return(folders('/guest/one /guest/two'))
+      middleware.call(env)
+      pid = receiver_pid(process_pidfile)
+      allow(vm).to receive(:synced_folders).and_return(folders('/guest/one', '/guest/two'))
+
+      middleware.call(env)
+
+      expect(stopped?(pid)).to be(true)
+      expect(receiver_pid(process_pidfile)).not_to eq(pid)
+      expect(process_directory.join('receiver.argv').binread.split("\0").drop(3)).to eq(['/guest/one', '/guest/two'])
+    end
+
+    it 'stops the previous process rather than starting an unrestricted receiver when every folder is disabled' do
+      middleware.call(env)
+      pid = receiver_pid(process_pidfile)
+      allow(vm).to receive(:synced_folders).and_return('disabled' => { guestpath: '/guest', disabled: true })
+
+      middleware.call(env)
+
+      expect(stopped?(pid)).to be(true)
+      expect(ui).to have_received(:error).with(/no enabled synced folders/i)
+    end
+
+    it 'does not start an unrestricted receiver when there are no synced folders' do
+      allow(vm).to receive(:synced_folders).and_return({})
+
+      middleware.call(env)
+
+      expect(process_pidfile).not_to exist
+      expect(ui).to have_received(:error).with(/no enabled synced folders/i)
+    end
+  end
+
   describe 'with sudo and systemd' do
+    it 'restricts the service to enabled guest paths rather than host paths' do
+      allow(vm).to receive(:synced_folders).and_return(
+        folders('/guest/one', '/guest/two').merge('disabled' => { guestpath: '/disabled', disabled: true })
+      )
+
+      middleware.call(env)
+
+      command = unit.read.lines.find { |line| line.start_with?('ExecStart=') }
+      expect(Shellwords.split(command).last(2)).to eq(['/guest/one', '/guest/two'])
+      expect(command).not_to include(directory.join('host').to_s, '/disabled')
+    end
+
+    it 'quotes spaces, quotes, backslashes, dollars and systemd specifiers in guest roots' do
+      allow(vm).to receive(:synced_folders).and_return(folders(%q{/guest/team's "docs" \ $HOME %n}))
+
+      middleware.call(env)
+
+      expect(unit.read).to include(%q{"/guest/team's \"docs\" \\\\ $$HOME %%n"})
+    end
+
+    it 'restarts the service when the enabled root set changes without uploading the binary again' do
+      middleware.call(env)
+      guest.systemctl_log.delete
+      allow(vm).to receive(:synced_folders).and_return(folders('/other guest'))
+
+      middleware.call(env)
+
+      expect(unit.read).to include('"/other guest"')
+      expect(guest.uploads.size).to eq(1)
+      expect(guest.systemctl_calls).to include('daemon-reload', 'restart notify-forwarder.service')
+    end
+
+    it 'keeps the service when only the order or duplication of roots changes' do
+      allow(vm).to receive(:synced_folders).and_return(folders('/guest/one', '/guest/two'))
+      middleware.call(env)
+      guest.systemctl_log.delete
+      allow(vm).to receive(:synced_folders).and_return(folders('/guest/two', '/guest/one', '/guest/two'))
+
+      middleware.call(env)
+
+      expect(guest.systemctl_calls).not_to include('daemon-reload', 'restart notify-forwarder.service')
+    end
+
+    it 'stops and disables the previous service rather than allowing an empty root set' do
+      middleware.call(env)
+      guest.systemctl_log.delete
+      allow(vm).to receive(:synced_folders).and_return({})
+
+      middleware.call(env)
+
+      expect(guest.systemctl_calls).to include('disable --now notify-forwarder.service')
+      expect(ui).to have_received(:error).with(/no enabled synced folders/i)
+    end
+
+    it 'does not install an unrestricted service when every folder is disabled' do
+      allow(vm).to receive(:synced_folders).and_return('disabled' => { guestpath: '/guest', disabled: true })
+
+      middleware.call(env)
+
+      expect(unit).not_to exist
+      expect(ui).to have_received(:error).with(/no enabled synced folders/i)
+    end
+
     it 'installs the receiver in a root-owned directory and never in the shared /tmp path' do
       middleware.call(env)
 
@@ -205,7 +350,12 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
   end
 
   describe 'with sudo and no systemd' do
+    let(:process_directory) { system_directory }
+    let(:process_pidfile) { runtime_directory.join('receiver.pid') }
+
     before { systemd_runtime.rmdir }
+
+    include_examples 'a rooted background receiver'
 
     it 'runs from the root-owned directory as the SSH user and keeps one process' do
       middleware.call(env)
@@ -252,6 +402,10 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
   describe 'without sudo' do
     let(:guest) { ShellGuest.new(sandbox, sudo: false) }
     let(:private_directory) { sandbox.join('home/.local/libexec/notify-forwarder') }
+    let(:process_directory) { private_directory }
+    let(:process_pidfile) { private_directory.join('receiver.pid') }
+
+    include_examples 'a rooted background receiver'
 
     it 'runs from a directory only the SSH user can reach' do
       middleware.call(env)
