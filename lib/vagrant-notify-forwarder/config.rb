@@ -48,6 +48,14 @@ module VagrantPlugins
         @binaries = prepare_binaries(@binaries)
       end
 
+      def validate(_machine)
+        errors = []
+        unless @port.is_a?(Integer) && (1..65535).cover?(@port)
+          errors << 'config.notify_forwarder.port must be an integer between 1 and 65535.'
+        end
+        { 'notify_forwarder' => errors }
+      end
+
       private
 
       def prepare_binaries(value)

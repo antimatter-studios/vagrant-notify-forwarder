@@ -188,8 +188,8 @@ module VagrantPlugins
       def self.claim_free_port(env, first)
         release_port_claim(env)
 
-        PORT_ATTEMPTS.times do |offset|
-          port = first + offset
+        last = [first + PORT_ATTEMPTS - 1, 65535].min
+        (first..last).each do |port|
           claim = lock_port(env, port)
           next unless claim
 
@@ -199,7 +199,7 @@ module VagrantPlugins
           end
           claim.close
         end
-        raise PortUnavailable.new(first, first + PORT_ATTEMPTS - 1)
+        raise PortUnavailable.new(first, last)
       end
 
       # The files stay: removing one could separate two holders of the same port.
