@@ -7,7 +7,7 @@ require 'open3'
 class ShellGuest
   attr_reader :root, :uploads, :commands
 
-  def initialize(root, sudo: true, is_active: 'active', login_shell: false)
+  def initialize(root, sudo: true, is_active: 'active', login_shell: false, main_pid: 0)
     @root = Pathname.new(root)
     @login_shell = login_shell
     @uploads = []
@@ -20,6 +20,7 @@ class ShellGuest
     stub('systemctl', <<~SH)
       echo "$*" >> '#{systemctl_log}'
       if [ "$1" = is-active ]; then echo '#{is_active}'; [ '#{is_active}' = active ]; fi
+      if [ "$1" = show ]; then echo 'MainPID=#{main_pid}'; fi
     SH
     # Ownership is what cannot be given without root: the request is recorded.
     stub('install', <<~SH)

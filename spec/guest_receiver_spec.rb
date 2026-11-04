@@ -280,6 +280,67 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
       expect(guest.systemctl_calls).to include('start notify-forwarder.service')
     end
 
+    # The receiver opens each root once, when it starts. A real descriptor cannot be
+    # handed to the stub, so a link under a stand-in /proc takes its place: the test
+    # follows it to the directory the receiver holds, as it follows /proc/<pid>/fd/<n>.
+    # A folder mounted over a root is then the root naming some other directory.
+    describe 'with a service already running' do
+      let(:guest) { ShellGuest.new(sandbox, main_pid: 4242) }
+      let(:descriptors) { sandbox.join('proc/4242/fd') }
+      let(:share) { sandbox.join('roots/share') }
+      let(:repo) { sandbox.join('roots/repo') }
+      let(:disk) { sandbox.join('disk') }
+
+      before do
+        stub_const("#{module_name}::PROC_DIRECTORY", sandbox.join('proc').to_s)
+        descriptors.mkpath
+        descriptors.join('0').write('standard input is not a root')
+        [share, repo, disk.join('share'), disk.join('repo')].each(&:mkpath)
+        allow(vm).to receive(:synced_folders).and_return(folders(share.to_s, repo.to_s))
+        middleware.call(env)
+        guest.systemctl_log.delete
+      end
+
+      def holds(directories)
+        directories.each_with_index { |held, index| descriptors.join((index + 8).to_s).make_symlink(held) }
+      end
+
+      it 'restarts it when every root was mounted after it started, as on a second boot' do
+        holds([disk.join('repo'), disk.join('share')])
+
+        middleware.call(env)
+
+        expect(guest.systemctl_calls).to include('restart notify-forwarder.service')
+        expect(guest.uploads.size).to eq(1)
+      end
+
+      it 'restarts it when only one root was mounted after it started' do
+        holds([repo, disk.join('share')])
+
+        middleware.call(env)
+
+        expect(guest.systemctl_calls).to include('restart notify-forwarder.service')
+      end
+
+      it 'leaves it running when it holds the directory each root names' do
+        holds([repo, share])
+
+        middleware.call(env)
+
+        expect(guest.systemctl_calls).not_to include('restart notify-forwarder.service')
+        expect(guest.systemctl_calls).to include('start notify-forwarder.service')
+      end
+
+      it 'leaves it running when a root is gone, since a restart would end the other roots too' do
+        holds([repo, share])
+        share.rmdir
+
+        middleware.call(env)
+
+        expect(guest.systemctl_calls).not_to include('restart notify-forwarder.service')
+      end
+    end
+
     it 'restarts the service when the port changes' do
       middleware.call(env)
       guest.systemctl_log.delete
