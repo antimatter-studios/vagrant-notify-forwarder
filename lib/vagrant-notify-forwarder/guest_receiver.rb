@@ -11,6 +11,7 @@ module VagrantPlugins
       RUNTIME_DIRECTORY = '/run/notify-forwarder'.freeze
       USER_DIRECTORY = '.local/libexec/notify-forwarder'.freeze
       SYSTEMD_RUNTIME = '/run/systemd/system'.freeze
+      PROC_DIRECTORY = '/proc'.freeze
       SERVICE = 'notify-forwarder.service'.freeze
       UNIT_PATH = "/etc/systemd/system/#{SERVICE}".freeze
       LEGACY_BINARY = '/tmp/notify-forwarder'.freeze
@@ -183,6 +184,7 @@ module VagrantPlugins
             '  restart=1',
             'fi',
             'rm -f "$wanted"',
+            *restart_when_a_root_moved,
             "systemctl enable #{SERVICE} >/dev/null 2>&1",
             %(if [ "$restart" = 1 ]; then systemctl restart #{SERVICE}; else systemctl start #{SERVICE}; fi),
             'sleep 1',
@@ -195,6 +197,30 @@ module VagrantPlugins
 
         @ui.error "Notify-forwarder: The guest service did not stay up; see `journalctl -u notify-forwarder` in the guest"
         false
+      end
+
+      # The receiver opens each root once, when it starts, and works through those
+      # descriptors. On a later boot the service starts before Vagrant mounts anything,
+      # so it holds the empty directories under the mounts and never sees a file in
+      # them, and `systemctl start` leaves it that way. Nothing in the guest knows
+      # about the mounts at boot, so no unit ordering can wait for them.
+      #
+      # A root that does not resolve is left alone: the receiver would exit for all
+      # of its roots, and the service already retries until it comes back.
+      def restart_when_a_root_moved
+        [
+          "main=$(systemctl show -p MainPID #{SERVICE} | cut -d= -f2)",
+          'if [ -n "$main" ] && [ "$main" != 0 ]; then',
+          "  for root in #{@roots.map { |root| quote(root) }.join(' ')}; do",
+          '    [ -e "$root" ] || continue',
+          '    held=0',
+          "    for descriptor in #{quote(PROC_DIRECTORY)}/\"$main\"/fd/*; do",
+          '      if [ "$descriptor" -ef "$root" ]; then held=1; fi',
+          '    done',
+          '    if [ "$held" = 0 ]; then restart=1; fi',
+          '  done',
+          'fi'
+        ]
       end
 
       def prepare_runtime_directory(user)

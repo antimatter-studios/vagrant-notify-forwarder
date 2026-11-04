@@ -82,6 +82,12 @@ changes only what differs. A `resume`, or an `up` on a running machine, uploads 
 matching receiver running. A receiver an earlier version started from `/tmp/notify-forwarder` is
 stopped, and that file is removed.
 
+The receiver opens each root once, when it starts. On a later boot the service starts before Vagrant
+mounts the synced folders, so it holds the directories underneath them. Each start therefore also
+compares the directories the service holds with the ones its roots name now, and restarts it if they
+differ. A background process needs no such check, because it starts only after the folders are
+mounted.
+
 A receiver that cannot start exits with a nonzero status: a port that is not a whole number from 1
 to 65535, or one something else in the guest holds. The plugin reports it and the boot continues.
 The service tries again every 5 seconds, so it recovers once the port is free. A background process
