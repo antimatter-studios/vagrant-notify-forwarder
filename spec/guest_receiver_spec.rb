@@ -44,6 +44,12 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
     end
   end
 
+  # Exits at once, as a receiver does on a fatal error (nonzero) or a stand-in does (zero).
+  def write_exiting_binary(status)
+    binary.write("#!/bin/sh\nexit #{status}\n")
+    binary.chmod(0o755)
+  end
+
   # Stays alive as a receiver does, under the arguments it was started with.
   def write_binary(marker)
     binary.write(<<~SH)
@@ -168,6 +174,24 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
       expect { middleware.call(env) }.not_to raise_error
       expect(ui).to have_received(:error).with(/journalctl -u notify-forwarder/)
     end
+
+    # What systemctl says while Restart=on-failure waits to try a receiver that exited nonzero.
+    it 'reports a service waiting to restart after a fatal exit without failing the boot' do
+      restarting = ShellGuest.new(sandbox, is_active: 'activating')
+      allow(machine).to receive(:communicate).and_return(restarting)
+
+      expect { middleware.call(env) }.not_to raise_error
+      expect(ui).to have_received(:error).with(/journalctl -u notify-forwarder/)
+    end
+
+    it 'accepts a receiver that exited cleanly, as a stand-in binary does' do
+      stopped = ShellGuest.new(sandbox, is_active: 'inactive')
+      allow(machine).to receive(:communicate).and_return(stopped)
+
+      middleware.call(env)
+
+      expect(ui).not_to have_received(:error)
+    end
   end
 
   describe 'on a machine beside a saved one' do
@@ -206,6 +230,22 @@ RSpec.describe VagrantPlugins::VagrantNotifyForwarder::Action::StartClientForwar
 
       expect(stopped?(pid)).to be(true)
       expect(receiver_pid(runtime_directory.join('receiver.pid'))).not_to eq(pid)
+    end
+
+    it 'reports a receiver that exits nonzero, naming the command that shows why' do
+      write_exiting_binary(64)
+
+      expect { middleware.call(env) }.not_to raise_error
+
+      expect(ui).to have_received(:error).with(/exited at once.*receive -p 29324/)
+    end
+
+    it 'accepts a receiver that exits cleanly, as a stand-in binary does' do
+      write_exiting_binary(0)
+
+      middleware.call(env)
+
+      expect(ui).not_to have_received(:error)
     end
   end
 

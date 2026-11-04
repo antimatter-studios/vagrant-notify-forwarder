@@ -17,7 +17,7 @@ Or from a specific release:
 
 ```bash
 curl -fsSL -o /tmp/vagrant-notify-forwarder-christhomas.gem \
-  https://github.com/antimatter-studios/vagrant-notify-forwarder/releases/download/v0.7.5/vagrant-notify-forwarder-christhomas-0.7.5.gem
+  https://github.com/antimatter-studios/vagrant-notify-forwarder/releases/download/v0.7.6/vagrant-notify-forwarder-christhomas-0.7.6.gem
 vagrant plugin install /tmp/vagrant-notify-forwarder-christhomas.gem
 ```
 
@@ -55,9 +55,9 @@ config.notify_forwarder.enable = false
 
 ### Permissions
 
-The receiver in the guest runs as the SSH user, by default `vagrant`. It needs to be able
-to write to the files in your shared folders, because that is how it raises an event. If the
-SSH user cannot write to them, run it as root:
+The receiver in the guest runs as the SSH user, by default `vagrant`. It opens each file it is
+told about for writing, and writes nothing to it, because that open is part of how it raises an
+event. If the SSH user may not open the files in your shared folders for writing, run it as root:
 
 ```ruby
 config.notify_forwarder.run_as_root = true
@@ -81,6 +81,24 @@ Each start compares the binary's SHA-256 and the service definition with what th
 changes only what differs. A `resume`, or an `up` on a running machine, uploads nothing and leaves a
 matching receiver running. A receiver an earlier version started from `/tmp/notify-forwarder` is
 stopped, and that file is removed.
+
+A receiver that cannot start exits with a nonzero status: a port that is not a whole number from 1
+to 65535, or one something else in the guest holds. The plugin reports it and the boot continues.
+The service tries again every 5 seconds, so it recovers once the port is free. A background process
+is not tried again until the next `up`.
+
+The plugin starts the receiver with no root directories, so it acts on a regular file anywhere its
+user may open one for writing, and it prints a warning saying so at each start.
+
+### What the receiver does to a file
+
+The receiver writes no file data, size, mode or mtime. For each path it opens the file for writing,
+creates and removes the extended attribute `user.notify-forwarder`, and closes the file. That raises
+`IN_OPEN`, `IN_ATTRIB` and `IN_CLOSE_WRITE` in the guest, and the host sees the file's ctime change.
+
+- It raises no `IN_MODIFY`, so a watcher that listens only for that event sees nothing.
+- A filesystem without user extended attributes, such as NFSv3, gets no `IN_ATTRIB`.
+- A file the receiver cannot open for writing raises nothing.
 
 ### Overriding binary sources
 
@@ -142,6 +160,9 @@ The plugin downloads binaries for supported platforms:
 | Linux x86_64 | ✓ | ✓ |
 | macOS arm64 | ✓ | — |
 | macOS x86_64 | ✓ | — |
+
+The Linux binaries link against glibc: 2.28 or newer on arm64 and x86_64, and 2.34 or newer on
+armv7l. The macOS binaries declare a minimum of macOS 26.0.
 
 FreeBSD is detected and has no default binary. Supply one through
 `config.notify_forwarder.binaries`.

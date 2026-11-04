@@ -40,6 +40,26 @@ RSpec.describe 'what the project says about itself' do
     expect(sources.select { |path| File.read(path).include?('github.com/christhomas/') }).to eq([])
   end
 
+  # A key the plugin can reach has to name an asset the release has.
+  it 'asks the release for the asset named for what each platform reports' do
+    utils = VagrantPlugins::VagrantNotifyForwarder::Utils
+    version = VagrantPlugins::VagrantNotifyForwarder::Config::NOTIFY_FORWARDER_VERSION
+    {
+      %w[Linux x86_64] => 'linux_x86_64',
+      %w[Linux amd64] => 'linux_x86_64',
+      %w[Linux aarch64] => 'linux_arm64',
+      %w[Linux arm64] => 'linux_arm64',
+      %w[Linux armv7l] => 'linux_armv7l',
+      %w[Darwin x86_64] => 'darwin_x86_64',
+      %w[Darwin arm64] => 'darwin_arm64'
+    }.each do |(os, hardware), asset|
+      key = [utils.parse_os_name(os), utils.parse_hardware_name(hardware)]
+      expect(binaries.fetch(key).first).to eq(
+        "#{owner}/notify-forwarder/releases/download/#{version}/notify-forwarder-#{asset}"
+      )
+    end
+  end
+
   it 'has a changelog section for the current version' do
     expect(File.read(File.join(root, 'CHANGELOG.md'))).to match(/^## v#{Regexp.escape(version)}$/)
   end
