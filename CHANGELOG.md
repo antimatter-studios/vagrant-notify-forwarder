@@ -1,13 +1,17 @@
 # Changelog
 
-## v0.7.6
+## v0.7.7
 
-- Updated all notify-forwarder binaries to v1.2.0 and all SHA256 checksums
+- Version 0.7.6 was tagged and never published, so this is the first release of everything below; a user of 0.7.5 gets all of it at once
+- Updated all notify-forwarder binaries to v1.2.1 and all SHA256 checksums
 - The receiver no longer writes to the files an event names: no data, size, mode or mtime changes, so it cannot empty a file the host has just written
 - The receiver raises `IN_OPEN`, `IN_ATTRIB` and `IN_CLOSE_WRITE`, and no longer `IN_MODIFY`; a filesystem without user extended attributes, such as NFSv3, also gets no `IN_ATTRIB`
 - A receiver that cannot start exits nonzero with a message, and the plugin reports it; a bad port is refused and never read as a different one
-- The Linux arm64 and x86_64 binaries need glibc 2.28, up from 2.27; armv7l stays at 2.34
-- The macOS binaries declare a minimum of macOS 26.0, up from 15.0
+- The Linux binaries need glibc 2.27: unchanged on arm64 and x86_64, and down from 2.34 on armv7l
+- The macOS binaries declare a minimum of macOS 15.0, unchanged
+- The receiver acts only on the guest paths of the machine's enabled synced folders and refuses files outside them, including symlinks that resolve outside them; a change to that set restarts it, and it is stopped when no folder is enabled (#26)
+- A receive root that does not resolve stops the receiver with status 64 rather than leaving that root out; the service retries every 5 seconds (#26)
+- `config.notify_forwarder.port` must be an integer from 1 to 65535, so a port set as a string now fails validation, and the free-port search stops at 65535 (#27)
 - The guest receiver is a supervised service from a root-owned directory, or a checked background process, and a start changes only what differs; one in `/tmp/notify-forwarder` is stopped and removed (#22)
 - Host watchers stop at halt, suspend, destroy and reload on every provider, and exit by themselves after their machine goes away, about 15 seconds after SSH stops answering (#19)
 - Watcher PIDs are checked against start time and command line before termination (#18); a watcher started by an earlier version has only a PID on record, so it is not signalled and has to be ended by hand
@@ -21,6 +25,10 @@
 - A disabled plugin no longer stops the machine from booting (#13)
 - The README, gemspec and binary URLs name the current gem, version and owner (#25)
 - Specs run on every pull request (#12)
+
+## v0.7.6
+
+- Tagged and never published: the release workflow stopped before it reached RubyGems, so this version does not exist there and the tag holds no release; its changes ship in v0.7.7
 
 ## v0.7.5
 

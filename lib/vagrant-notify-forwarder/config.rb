@@ -6,7 +6,7 @@ module VagrantPlugins
       attr_accessor :run_as_root
       attr_accessor :binaries
 
-      NOTIFY_FORWARDER_VERSION = 'v1.2.0'.freeze
+      NOTIFY_FORWARDER_VERSION = 'v1.2.1'.freeze
       NOTIFY_FORWARDER_BASE_URL = "https://github.com/antimatter-studios/notify-forwarder/releases/download/#{NOTIFY_FORWARDER_VERSION}".freeze
 
       # The checksums belong to NOTIFY_FORWARDER_VERSION and move with it. The release
@@ -14,23 +14,23 @@ module VagrantPlugins
       DEFAULT_BINARIES = {
         [:linux, :x86_64] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-linux_x86_64",
-          'aa9e75bab32c6566ed2f1812084ba81f5984baa47b99b5591b6331cccfc4aa55'
+          '00113ce2c49bd0d4017de76916a14db5b2bda4d21e5f0f52b64f7fd397ada09e'
         ],
         [:linux, :arm64] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-linux_arm64",
-          '4c28fa44154acb8898f46ca62115375ad5620b0dcd9ce56b231edac1ffd252d5'
+          '3d217d7d672f27687470dc0ca4d24e38a1229b2f57c4856e1f76687b90fae0bb'
         ],
         [:linux, :armv7l] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-linux_armv7l",
-          '153ca6ab7ec6f71aab23188af6e5a1fa5f74bb5c083d9af9bfd16a6ef0b520e1'
+          '6ad1588b68b44566dce2e5a18d774c8771134ad4eb01ef0b24bcbab22e46f4d4'
         ],
         [:darwin, :x86_64] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-darwin_x86_64",
-          '88b7ca2070dcaf278e35531fd06aa359623f4a84e8a9f03adf2bd349e7343dfd'
+          '171b48c589cc6235c83e066dc1c09561aa31aac8ad7b2d1557137ff4201a7349'
         ],
         [:darwin, :arm64] => [
           "#{NOTIFY_FORWARDER_BASE_URL}/notify-forwarder-darwin_arm64",
-          '4236f8bf950268fe43eb7765e9f2b4c0546f847ea0abd2f2cff1e5395a4014f7'
+          '0b186296ca12b2c23c35e1440effd712ee5b63d4f556ab8261d9fa3086f7d737'
         ],
       }.freeze
 

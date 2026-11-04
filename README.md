@@ -17,7 +17,7 @@ Or from a specific release:
 
 ```bash
 curl -fsSL -o /tmp/vagrant-notify-forwarder-christhomas.gem \
-  https://github.com/antimatter-studios/vagrant-notify-forwarder/releases/download/v0.7.6/vagrant-notify-forwarder-christhomas-0.7.6.gem
+  https://github.com/antimatter-studios/vagrant-notify-forwarder/releases/download/v0.7.7/vagrant-notify-forwarder-christhomas-0.7.7.gem
 vagrant plugin install /tmp/vagrant-notify-forwarder-christhomas.gem
 ```
 
@@ -180,8 +180,9 @@ The plugin downloads binaries for supported platforms:
 | macOS arm64 | ✓ | — |
 | macOS x86_64 | ✓ | — |
 
-The Linux binaries link against glibc: 2.28 or newer on arm64 and x86_64, and 2.34 or newer on
-armv7l. The macOS binaries declare a minimum of macOS 26.0.
+The Linux binaries link against glibc 2.27 or newer. The macOS binaries declare a minimum of
+macOS 15.0. Both floors are read from the binaries' build metadata: notify-forwarder has not run
+them on macOS 15 or on a glibc 2.27 system.
 
 FreeBSD is detected and has no default binary. Supply one through
 `config.notify_forwarder.binaries`.
